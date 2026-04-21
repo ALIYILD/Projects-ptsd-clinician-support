@@ -59,6 +59,13 @@ PYTHONPATH=src python3 scripts/ingest_guidelines.py --db data/processed/ptsd_sup
 PYTHONPATH=src python3 scripts/run_server.py --db data/processed/ptsd_support.db --port 8080
 ```
 
+Environment-driven startup:
+
+```bash
+cp .env.example .env
+PYTHONPATH=src python3 scripts/bootstrap_backend.py
+```
+
 ## Backend Endpoints
 
 - `GET /health`
@@ -73,6 +80,13 @@ PYTHONPATH=src python3 scripts/run_server.py --db data/processed/ptsd_support.db
 - `GET /cases/{case_key}/reviews`
 - `POST /assessment/evaluate`
 - `POST /recommendations/support-plan`
+
+## Deployment Prep
+
+- `.env.example` for runtime configuration
+- `Dockerfile` for container builds
+- `docker-compose.yml` for local container startup
+- [startup.md](docs/startup.md) for local and Docker startup
 
 ## MVP Roadmap
 

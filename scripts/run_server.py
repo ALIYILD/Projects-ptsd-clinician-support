@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from wsgiref.simple_server import make_server
 
@@ -9,12 +10,25 @@ from ptsd_support.api.app import AppConfig, create_app
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the PTSD clinician support backend.")
-    parser.add_argument("--db", required=True, help="Path to SQLite database.")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host.")
-    parser.add_argument("--port", type=int, default=8080, help="Bind port.")
+    parser.add_argument(
+        "--db",
+        default=os.environ.get("PTSD_SUPPORT_DB_PATH", "data/processed/ptsd_support.db"),
+        help="Path to SQLite database.",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("PTSD_SUPPORT_HOST", "127.0.0.1"),
+        help="Bind host.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PTSD_SUPPORT_PORT", "8080")),
+        help="Bind port.",
+    )
     parser.add_argument(
         "--audit-log",
-        default="data/processed/audit.jsonl",
+        default=os.environ.get("PTSD_SUPPORT_AUDIT_LOG", "data/processed/audit.jsonl"),
         help="Path to append-only audit log.",
     )
     args = parser.parse_args()

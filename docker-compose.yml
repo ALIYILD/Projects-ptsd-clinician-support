@@ -1,0 +1,17 @@
+services:
+  ptsd-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PTSD_SUPPORT_PORT:-8080}:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./data/processed:/app/data/processed
+      - ./data/raw:/app/data/raw
+    command: >
+      sh -c "
+      python scripts/ingest_guidelines.py --db ${PTSD_SUPPORT_DB_PATH:-data/processed/ptsd_support.db} --seed ${PTSD_SUPPORT_GUIDELINE_SEED:-data/raw/guidelines/ptsd_guidelines.json} &&
+      python scripts/run_server.py --host 0.0.0.0 --port 8080 --db ${PTSD_SUPPORT_DB_PATH:-data/processed/ptsd_support.db} --audit-log ${PTSD_SUPPORT_AUDIT_LOG:-data/processed/audit.jsonl}
+      "
