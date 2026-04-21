@@ -31,6 +31,9 @@ Initial scaffold with:
 - deterministic treatment-support rules
 - explicit SQL migrations
 - file-backed background ingestion worker
+- differential support
+- care-plan and home-task generation
+- clinician note drafting
 
 ## Project Layout
 
@@ -81,8 +84,15 @@ PYTHONPATH=src python3 scripts/bootstrap_backend.py
 - `GET /cases/{case_key}`
 - `POST /cases/{case_key}/reviews`
 - `GET /cases/{case_key}/reviews`
+- `POST /decision-support/differential`
 - `POST /assessment/evaluate`
 - `POST /recommendations/support-plan`
+- `POST /care-plans/generate`
+- `GET /cases/{case_key}/care-plans`
+- `POST /cases/{case_key}/care-plans`
+- `POST /notes/draft`
+- `GET /cases/{case_key}/notes`
+- `POST /cases/{case_key}/notes`
 
 ## Deployment Prep
 

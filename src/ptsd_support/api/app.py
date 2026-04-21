@@ -10,6 +10,7 @@ from urllib.parse import parse_qs
 
 from ptsd_support.services.assessment import evaluate_case
 from ptsd_support.services.audit import append_audit_event, append_request_event
+from ptsd_support.services.care_plans import generate_care_plan, list_care_plans, save_care_plan
 from ptsd_support.services.cases import (
     add_case_review,
     create_case,
@@ -18,7 +19,9 @@ from ptsd_support.services.cases import (
     list_cases,
     record_case_recommendation,
 )
+from ptsd_support.services.differential import build_differential_diagnosis
 from ptsd_support.services.guidelines import list_guideline_recommendations, list_guidelines
+from ptsd_support.services.notes import draft_clinician_note, list_note_drafts, save_note_draft
 from ptsd_support.services.recommendations import build_support_plan
 from ptsd_support.services.retrieval import get_ingest_summary, search_articles
 
@@ -221,6 +224,26 @@ def create_app(config: AppConfig):
                 )
                 return response
 
+            if method == "GET" and path.startswith("/cases/") and path.endswith("/care-plans"):
+                case_key = path.split("/")[2]
+                payload = {"rows": list_care_plans(config.db_path, case_key=case_key), "request_id": request_id}
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {"request_id": request_id, "method": method, "path": path, "status": 200, "case_key": case_key, "duration_ms": round((perf_counter() - started_at) * 1000, 2)},
+                )
+                return response
+
+            if method == "GET" and path.startswith("/cases/") and path.endswith("/notes"):
+                case_key = path.split("/")[2]
+                payload = {"rows": list_note_drafts(config.db_path, case_key=case_key), "request_id": request_id}
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {"request_id": request_id, "method": method, "path": path, "status": 200, "case_key": case_key, "duration_ms": round((perf_counter() - started_at) * 1000, 2)},
+                )
+                return response
+
             if method == "POST" and path.startswith("/cases/") and path.endswith("/reviews"):
                 case_key = path.split("/")[2]
                 data = _read_json(environ)
@@ -249,6 +272,42 @@ def create_app(config: AppConfig):
                         "case_key": case_key,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
+                )
+                return response
+
+            if method == "POST" and path.startswith("/cases/") and path.endswith("/care-plans"):
+                case_key = path.split("/")[2]
+                data = _read_json(environ)
+                payload = save_care_plan(
+                    config.db_path,
+                    case_key=case_key,
+                    plan_type=data.get("plan_type", "home_tasks"),
+                    payload=data["payload"],
+                    created_by=data.get("created_by"),
+                )
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {"request_id": request_id, "method": method, "path": path, "status": 200, "case_key": case_key, "duration_ms": round((perf_counter() - started_at) * 1000, 2)},
+                )
+                return response
+
+            if method == "POST" and path.startswith("/cases/") and path.endswith("/notes"):
+                case_key = path.split("/")[2]
+                data = _read_json(environ)
+                payload = save_note_draft(
+                    config.db_path,
+                    case_key=case_key,
+                    note_type=data.get("note_type", "assessment"),
+                    payload=data["payload"],
+                    created_by=data.get("created_by"),
+                )
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {"request_id": request_id, "method": method, "path": path, "status": 200, "case_key": case_key, "duration_ms": round((perf_counter() - started_at) * 1000, 2)},
                 )
                 return response
 
@@ -294,6 +353,18 @@ def create_app(config: AppConfig):
                 )
                 return response
 
+            if method == "POST" and path == "/decision-support/differential":
+                data = _read_json(environ)
+                case = data.get("case", {})
+                payload = build_differential_diagnosis(case)
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {"request_id": request_id, "method": method, "path": path, "status": 200, "duration_ms": round((perf_counter() - started_at) * 1000, 2)},
+                )
+                return response
+
             if method == "POST" and path == "/recommendations/support-plan":
                 data = _read_json(environ)
                 case = data.get("case")
@@ -329,6 +400,66 @@ def create_app(config: AppConfig):
                         "case_key": data.get("case_key"),
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
+                )
+                return response
+
+            if method == "POST" and path == "/care-plans/generate":
+                data = _read_json(environ)
+                case = data.get("case", {})
+                case_evaluation = data.get("case_evaluation") or evaluate_case(case).to_dict()
+                support_plan = data.get("support_plan") or build_support_plan(
+                    config.db_path,
+                    domains=data.get("domains"),
+                    case_context=case,
+                    case_evaluation=case_evaluation,
+                )
+                payload = generate_care_plan(case, case_evaluation, support_plan)
+                if data.get("case_key"):
+                    saved = save_care_plan(
+                        config.db_path,
+                        case_key=data["case_key"],
+                        plan_type=data.get("plan_type", "home_tasks"),
+                        payload=payload,
+                        created_by=data.get("created_by"),
+                    )
+                    payload["saved"] = saved
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {"request_id": request_id, "method": method, "path": path, "status": 200, "case_key": data.get("case_key"), "duration_ms": round((perf_counter() - started_at) * 1000, 2)},
+                )
+                return response
+
+            if method == "POST" and path == "/notes/draft":
+                data = _read_json(environ)
+                case = data.get("case", {})
+                case_evaluation = data.get("case_evaluation") or evaluate_case(case).to_dict()
+                support_plan = data.get("support_plan")
+                differential = data.get("differential")
+                care_plan = data.get("care_plan")
+                payload = draft_clinician_note(
+                    case=case,
+                    case_evaluation=case_evaluation,
+                    support_plan=support_plan,
+                    differential=differential,
+                    care_plan=care_plan,
+                    note_type=data.get("note_type", "assessment"),
+                )
+                if data.get("case_key"):
+                    saved = save_note_draft(
+                        config.db_path,
+                        case_key=data["case_key"],
+                        note_type=data.get("note_type", "assessment"),
+                        payload=payload,
+                        created_by=data.get("created_by"),
+                    )
+                    payload["saved"] = saved
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {"request_id": request_id, "method": method, "path": path, "status": 200, "case_key": data.get("case_key"), "duration_ms": round((perf_counter() - started_at) * 1000, 2)},
                 )
                 return response
 
