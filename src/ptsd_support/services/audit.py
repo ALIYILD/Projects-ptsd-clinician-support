@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-def append_audit_event(log_path: str | Path, event: dict[str, Any]) -> None:
+def append_jsonl_event(log_path: str | Path, event: dict[str, Any]) -> None:
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -15,3 +15,11 @@ def append_audit_event(log_path: str | Path, event: dict[str, Any]) -> None:
     }
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+
+
+def append_audit_event(log_path: str | Path, event: dict[str, Any]) -> None:
+    append_jsonl_event(log_path, {"stream": "audit", **event})
+
+
+def append_request_event(log_path: str | Path, event: dict[str, Any]) -> None:
+    append_jsonl_event(log_path, {"stream": "request", **event})

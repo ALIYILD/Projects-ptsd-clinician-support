@@ -87,6 +87,7 @@ PYTHONPATH=src python3 scripts/bootstrap_backend.py
 - `Dockerfile` for container builds
 - `docker-compose.yml` for local container startup
 - [startup.md](docs/startup.md) for local and Docker startup
+- [deployment.md](docs/deployment.md) for WAL mode, request logging, and Postgres track notes
 
 ## MVP Roadmap
 

@@ -31,12 +31,18 @@ def main() -> None:
         default=os.environ.get("PTSD_SUPPORT_AUDIT_LOG", "data/processed/audit.jsonl"),
         help="Path to append-only audit log.",
     )
+    parser.add_argument(
+        "--request-log",
+        default=os.environ.get("PTSD_SUPPORT_REQUEST_LOG", "data/processed/requests.jsonl"),
+        help="Path to structured request log.",
+    )
     args = parser.parse_args()
 
     app = create_app(
         AppConfig(
             db_path=Path(args.db).expanduser().resolve(),
             audit_log_path=Path(args.audit_log).expanduser().resolve(),
+            request_log_path=Path(args.request_log).expanduser().resolve(),
         )
     )
 

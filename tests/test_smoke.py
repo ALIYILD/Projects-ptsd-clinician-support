@@ -92,6 +92,7 @@ class SmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "api.db"
             log_path = Path(tmpdir) / "audit.jsonl"
+            request_log_path = Path(tmpdir) / "requests.jsonl"
             initialize_database(db_path)
             seed_path = Path("/Users/aliyildirim/Projects/ptsd-clinician-support/data/raw/guidelines/ptsd_guidelines.json")
             ingest_guideline_seed(db_path, seed_path)
@@ -130,7 +131,7 @@ class SmokeTests(unittest.TestCase):
             finally:
                 conn.close()
 
-            app = create_app(AppConfig(db_path=db_path, audit_log_path=log_path))
+            app = create_app(AppConfig(db_path=db_path, audit_log_path=log_path, request_log_path=request_log_path))
 
             def run_request(method: str, path: str, body: bytes = b"", query: str = ""):
                 captured = {}
@@ -152,6 +153,7 @@ class SmokeTests(unittest.TestCase):
             status, body = run_request("GET", "/health")
             self.assertEqual(status, "200 OK")
             self.assertIn(b"ptsd-clinician-support", body)
+            self.assertIn(b"request_id", body)
 
             status, body = run_request("GET", "/literature/search", query="query=emdr&limit=5&type=review")
             self.assertEqual(status, "200 OK")

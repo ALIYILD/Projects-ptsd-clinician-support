@@ -16,6 +16,7 @@ def main() -> None:
     host = env.get("PTSD_SUPPORT_HOST", "127.0.0.1")
     port = env.get("PTSD_SUPPORT_PORT", "8080")
     audit_log = env.get("PTSD_SUPPORT_AUDIT_LOG", "data/processed/audit.jsonl")
+    request_log = env.get("PTSD_SUPPORT_REQUEST_LOG", "data/processed/requests.jsonl")
 
     subprocess.run(
         [sys.executable, "scripts/ingest_guidelines.py", "--db", db_path, "--seed", guideline_seed],
@@ -24,7 +25,7 @@ def main() -> None:
         env=env,
     )
     subprocess.run(
-        [sys.executable, "scripts/run_server.py", "--db", db_path, "--host", host, "--port", port, "--audit-log", audit_log],
+        [sys.executable, "scripts/run_server.py", "--db", db_path, "--host", host, "--port", port, "--audit-log", audit_log, "--request-log", request_log],
         check=True,
         cwd=root,
         env=env,

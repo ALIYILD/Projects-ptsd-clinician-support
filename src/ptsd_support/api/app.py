@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import traceback
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from urllib.parse import parse_qs
 
 from ptsd_support.services.assessment import evaluate_case
-from ptsd_support.services.audit import append_audit_event
+from ptsd_support.services.audit import append_audit_event, append_request_event
 from ptsd_support.services.cases import (
     add_case_review,
     create_case,
@@ -28,6 +31,7 @@ def healthcheck() -> dict[str, str]:
 class AppConfig:
     db_path: Path
     audit_log_path: Path
+    request_log_path: Path
 
 
 def _json_response(start_response, status: str, payload: dict | list) -> list[bytes]:
@@ -54,10 +58,24 @@ def create_app(config: AppConfig):
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "/")
         query = parse_qs(environ.get("QUERY_STRING", ""))
+        request_id = environ.get("HTTP_X_REQUEST_ID") or str(uuid.uuid4())
+        started_at = perf_counter()
 
         try:
             if method == "GET" and path == "/health":
-                return _json_response(start_response, "200 OK", healthcheck())
+                payload = {**healthcheck(), "request_id": request_id}
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "GET" and path == "/literature/search":
                 payload = {
@@ -72,19 +90,54 @@ def create_app(config: AppConfig):
                         year_to=int(query["year_to"][0]) if "year_to" in query else None,
                     )
                 }
+                payload["request_id"] = request_id
                 append_audit_event(
                     config.audit_log_path,
                     {"event": "literature_search", "path": path, "params": query},
                 )
-                return _json_response(start_response, "200 OK", payload)
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "query": query,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "GET" and path == "/literature/summary":
-                payload = get_ingest_summary(config.db_path)
-                return _json_response(start_response, "200 OK", payload)
+                payload = {**get_ingest_summary(config.db_path), "request_id": request_id}
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "GET" and path == "/guidelines":
-                payload = {"rows": list_guidelines(config.db_path)}
-                return _json_response(start_response, "200 OK", payload)
+                payload = {"rows": list_guidelines(config.db_path), "request_id": request_id}
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "GET" and path == "/guidelines/recommendations":
                 payload = {
@@ -93,27 +146,80 @@ def create_app(config: AppConfig):
                         clinical_domain=query.get("clinical_domain", [None])[0],
                         modality=query.get("modality", [None])[0],
                         limit=int(query.get("limit", ["25"])[0]),
-                    )
+                    ),
+                    "request_id": request_id,
                 }
-                return _json_response(start_response, "200 OK", payload)
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "query": query,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "GET" and path == "/cases":
-                payload = {"rows": list_cases(config.db_path, patient_id=query.get("patient_id", [None])[0])}
-                return _json_response(start_response, "200 OK", payload)
+                payload = {
+                    "rows": list_cases(config.db_path, patient_id=query.get("patient_id", [None])[0]),
+                    "request_id": request_id,
+                }
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "query": query,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "POST" and path == "/cases":
                 case = _read_json(environ)
                 payload = create_case(config.db_path, case)
+                payload["request_id"] = request_id
                 append_audit_event(
                     config.audit_log_path,
                     {"event": "case_create", "path": path, "patient_id": case.get("patient_id")},
                 )
-                return _json_response(start_response, "200 OK", payload)
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "patient_id": case.get("patient_id"),
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "GET" and path.startswith("/cases/") and path.endswith("/reviews"):
                 case_key = path.split("/")[2]
-                payload = {"rows": list_case_reviews(config.db_path, case_key)}
-                return _json_response(start_response, "200 OK", payload)
+                payload = {"rows": list_case_reviews(config.db_path, case_key), "request_id": request_id}
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "case_key": case_key,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "POST" and path.startswith("/cases/") and path.endswith("/reviews"):
                 case_key = path.split("/")[2]
@@ -131,23 +237,62 @@ def create_app(config: AppConfig):
                     config.audit_log_path,
                     {"event": "case_review_add", "path": path, "case_key": case_key},
                 )
-                return _json_response(start_response, "200 OK", payload)
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "case_key": case_key,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "GET" and path.startswith("/cases/"):
                 case_key = path.split("/")[2]
                 payload = get_case_by_key(config.db_path, case_key)
                 if payload is None:
-                    return _json_response(start_response, "404 Not Found", {"error": "case_not_found", "case_key": case_key})
-                return _json_response(start_response, "200 OK", payload)
+                    return _json_response(start_response, "404 Not Found", {"error": "case_not_found", "case_key": case_key, "request_id": request_id})
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "case_key": case_key,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "POST" and path == "/assessment/evaluate":
                 case = _read_json(environ)
                 payload = evaluate_case(case).to_dict()
+                payload["request_id"] = request_id
                 append_audit_event(
                     config.audit_log_path,
                     {"event": "assessment_evaluate", "path": path, "patient_id": case.get("patient_id")},
                 )
-                return _json_response(start_response, "200 OK", payload)
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "patient_id": case.get("patient_id"),
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
             if method == "POST" and path == "/recommendations/support-plan":
                 data = _read_json(environ)
@@ -171,18 +316,57 @@ def create_app(config: AppConfig):
                     config.audit_log_path,
                     {"event": "support_plan", "path": path, "domains": data.get("domains", [])},
                 )
-                return _json_response(start_response, "200 OK", payload)
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "domains": data.get("domains", []),
+                        "case_key": data.get("case_key"),
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
 
-            return _json_response(
+            response = _json_response(
                 start_response,
                 "404 Not Found",
-                {"error": "not_found", "path": path},
+                {"error": "not_found", "path": path, "request_id": request_id},
             )
+            append_request_event(
+                config.request_log_path,
+                {
+                    "request_id": request_id,
+                    "method": method,
+                    "path": path,
+                    "status": 404,
+                    "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                },
+            )
+            return response
         except Exception as exc:
+            error_id = str(uuid.uuid4())
+            append_request_event(
+                config.request_log_path,
+                {
+                    "request_id": request_id,
+                    "error_id": error_id,
+                    "method": method,
+                    "path": path,
+                    "status": 500,
+                    "message": str(exc),
+                    "traceback": traceback.format_exc(),
+                    "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                },
+            )
             return _json_response(
                 start_response,
                 "500 Internal Server Error",
-                {"error": "internal_error", "message": str(exc)},
+                {"error": "internal_error", "message": str(exc), "request_id": request_id, "error_id": error_id},
             )
 
     return application
