@@ -29,6 +29,8 @@ Initial scaffold with:
 - guideline ingestion
 - patient-case persistence and review history
 - deterministic treatment-support rules
+- explicit SQL migrations
+- file-backed background ingestion worker
 
 ## Project Layout
 
@@ -54,6 +56,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 python scripts/ingest_literature.py --db data/processed/ptsd_support.db --inputs /Users/aliyildirim/ptsd_europepmc_papers.csv /Users/aliyildirim/ptsd_pubmed_only.csv /Users/aliyildirim/ptsd_reviews_or_clinical_trials_only.csv
+PYTHONPATH=src python3 scripts/migrate_db.py --db data/processed/ptsd_support.db
 PYTHONPATH=src python3 scripts/query_literature.py --db data/processed/ptsd_support.db --reviews-or-trials --limit 5
 PYTHONPATH=src python3 scripts/ingest_guidelines.py --db data/processed/ptsd_support.db
 PYTHONPATH=src python3 scripts/run_server.py --db data/processed/ptsd_support.db --port 8080
@@ -88,6 +91,7 @@ PYTHONPATH=src python3 scripts/bootstrap_backend.py
 - `docker-compose.yml` for local container startup
 - [startup.md](docs/startup.md) for local and Docker startup
 - [deployment.md](docs/deployment.md) for WAL mode, request logging, and Postgres track notes
+- [worker.md](docs/worker.md) for background ingestion
 
 ## MVP Roadmap
 
