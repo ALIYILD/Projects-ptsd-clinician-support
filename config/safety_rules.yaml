@@ -1,0 +1,94 @@
+product_scope:
+  audience: clinician
+  default_output_label: Draft for clinician review
+  allowed_functions:
+    - evidence_retrieval
+    - assessment_support
+    - differential_prompts
+    - citation_backed_treatment_comparison
+    - documentation_assistance
+  prohibited_functions:
+    - autonomous_diagnosis
+    - autonomous_prescribing
+    - direct_patient_treatment_recommendations
+    - unsupervised_neuromodulation_protocol_generation
+    - dose_or_taper_recommendations
+    - patient_facing_crisis_counseling_without_clinician_mediation
+
+workflow_controls:
+  require_named_clinician_session: true
+  require_clinician_signoff_for:
+    - assessment_summaries
+    - risk_flags
+    - care_plan_drafts
+    - patient_instructions
+    - handoff_notes
+  block_finalization_when:
+    - critical_fields_missing
+    - unresolved_red_flags
+    - contraindication_review_incomplete
+  always_show:
+    - source_attribution
+    - uncertainty
+    - missing_information
+    - clinician_review_required
+
+hard_stops:
+  - suicidality
+  - homicidality
+  - psychosis
+  - mania
+  - severe_intoxication_or_withdrawal
+  - unstable_medical_state
+  - severe_dissociation_or_impaired_capacity
+  - abuse_neglect_or_exploitation
+
+required_output_sections:
+  - evidence_summary
+  - citations
+  - uncertainty
+  - contraindications
+  - missing_information
+  - clinician_review_required
+
+contraindication_domains:
+  - acute_safety
+  - pregnancy
+  - renal_impairment
+  - hepatic_impairment
+  - seizure_risk
+  - bipolar_spectrum_risk
+  - psychosis_history
+  - substance_use_risk
+  - sleep_apnea_or_sleep_disorder
+  - drug_interactions
+  - trauma_treatment_readiness
+  - legal_or_consent_context
+
+audit_logging:
+  append_only: true
+  tamper_evident: true
+  timezone_normalized: true
+  retain_days: 2555
+  log_items:
+    - user_identity
+    - role
+    - patient_context
+    - session_id
+    - timestamp
+    - model_version
+    - prompt_version
+    - ruleset_version
+    - generated_output
+    - red_flags
+    - clinician_overrides
+    - export_events
+
+ui_disclosures:
+  global_banner:
+    - Clinician support tool. Not for autonomous diagnosis, crisis management, or treatment ordering.
+    - Outputs may be incomplete or incorrect and require clinician verification.
+  per_output:
+    - This is a draft summary or review aid.
+    - Source basis must be shown for recommendation-like content.
+    - Inferred statements must be marked as inferred.

@@ -1,0 +1,78 @@
+{
+  "guidelines": [
+    {
+      "guideline_key": "va_dod_ptsd_2023",
+      "source_name": "va_dod",
+      "title": "Management of Posttraumatic Stress Disorder and Acute Stress Disorder",
+      "organization": "VA/DoD",
+      "version_label": "2023",
+      "publication_date": "2023-01-01",
+      "review_date": "2024-02-27",
+      "source_url": "https://www.healthquality.va.gov/guidelines/MH/ptsd/",
+      "jurisdiction": "US",
+      "status": "active",
+      "summary": "VA/DoD clinician support guideline for acute stress disorder and PTSD management.",
+      "recommendations": [
+        {
+          "recommendation_key": "va_psychotherapy_first_line",
+          "clinical_domain": "psychotherapy",
+          "population": "adults with PTSD",
+          "modality": "psychotherapy",
+          "recommendation_text": "Trauma-focused psychotherapy should be considered a first-line treatment domain for many adults with PTSD, subject to clinical judgment and readiness.",
+          "strength": "strong_for",
+          "evidence_basis": "Guideline summary and clinician materials",
+          "caution_notes": "Confirm safety, dissociation burden, stabilization, and patient preference.",
+          "notes_json": "{\"source_type\":\"seed\",\"review_only\":true}"
+        },
+        {
+          "recommendation_key": "va_medication_review",
+          "clinical_domain": "medication",
+          "population": "adults with PTSD",
+          "modality": "medication",
+          "recommendation_text": "Medication decisions should be individualized and reviewed against contraindications, co-occurring disorders, and adverse-effect risks.",
+          "strength": "conditional",
+          "evidence_basis": "Guideline summary and pharmacologic interventions support material",
+          "caution_notes": "Not a prescribing directive; requires clinician verification.",
+          "notes_json": "{\"source_type\":\"seed\",\"review_only\":true}"
+        }
+      ]
+    },
+    {
+      "guideline_key": "nice_ng116_ptsd",
+      "source_name": "nice",
+      "title": "Post-traumatic stress disorder",
+      "organization": "NICE",
+      "version_label": "NG116",
+      "publication_date": "2018-12-05",
+      "review_date": "2025-04-08",
+      "source_url": "https://www.nice.org.uk/guidance/ng116",
+      "jurisdiction": "UK",
+      "status": "active",
+      "summary": "NICE PTSD guideline covering recognition, assessment, treatment, and coordination of care.",
+      "recommendations": [
+        {
+          "recommendation_key": "nice_assessment_and_coordination",
+          "clinical_domain": "assessment",
+          "population": "children, young people, and adults",
+          "modality": "assessment",
+          "recommendation_text": "PTSD assessment and care planning should consider symptom profile, functional impairment, and complex needs in a coordinated care context.",
+          "strength": "guideline_consensus",
+          "evidence_basis": "NG116 recommendations and rationale",
+          "caution_notes": "Do not collapse complex PTSD and PTSD workflows without clinician review.",
+          "notes_json": "{\"source_type\":\"seed\",\"review_only\":true}"
+        },
+        {
+          "recommendation_key": "nice_drug_treatment_caution",
+          "clinical_domain": "medication",
+          "population": "adults and children as applicable",
+          "modality": "medication",
+          "recommendation_text": "Drug treatment decisions for PTSD require careful indication review and should not displace psychologically focused care without a justified clinical rationale.",
+          "strength": "conditional",
+          "evidence_basis": "NG116 recommendations and rationale",
+          "caution_notes": "Use as evidence support only; requires clinician judgment and contraindication review.",
+          "notes_json": "{\"source_type\":\"seed\",\"review_only\":true}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "domains": {
+    "psychotherapy": {
+      "title": "Trauma-focused psychotherapy review",
+      "allowed_if_missing": [],
+      "blockers_any": ["suicidality", "homicidality", "psychosis", "mania", "severe_dissociation_or_impaired_capacity"],
+      "contraindication_blockers": ["acute_safety", "trauma_treatment_readiness", "psychosis_history"],
+      "guideline_domains": ["psychotherapy", "assessment"],
+      "message": "Psychotherapy should remain a clinician-reviewed option and depends on readiness, safety, and stabilization."
+    },
+    "medication": {
+      "title": "Medication evidence review",
+      "allowed_if_missing": [],
+      "blockers_any": ["severe_intoxication_or_withdrawal", "unstable_medical_state", "mania"],
+      "contraindication_blockers": ["pregnancy", "renal_impairment", "hepatic_impairment", "drug_interactions", "bipolar_spectrum_risk"],
+      "guideline_domains": ["medication"],
+      "message": "Medication outputs are evidence review only and require contraindication and interaction review."
+    },
+    "neuromodulation": {
+      "title": "Neuromodulation evidence review",
+      "allowed_if_missing": ["seizure_history"],
+      "blockers_any": ["psychosis", "mania", "unstable_medical_state"],
+      "contraindication_blockers": ["seizure_risk", "acute_safety", "legal_or_consent_context"],
+      "guideline_domains": ["neuromodulation"],
+      "message": "Neuromodulation remains specialist-reviewed and should never be emitted as an order or protocol."
+    },
+    "supplements": {
+      "title": "Supplements and nutrition evidence review",
+      "allowed_if_missing": [],
+      "blockers_any": ["unstable_medical_state"],
+      "contraindication_blockers": ["pregnancy", "hepatic_impairment", "drug_interactions"],
+      "guideline_domains": ["supplements", "medication"],
+      "message": "Supplement outputs are low-confidence evidence review only and require interaction/safety review."
+    }
+  }
+}
