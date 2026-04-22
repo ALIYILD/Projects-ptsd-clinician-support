@@ -8,7 +8,7 @@ from pathlib import Path
 from time import perf_counter
 from urllib.parse import parse_qs
 
-from ptsd_support.services.auth import authenticate_token, role_allows
+from ptsd_support.services.auth import actor_org_keys, authenticate_token, role_allows
 from ptsd_support.services.assessment import evaluate_case
 from ptsd_support.services.audit import append_audit_event, append_request_event
 from ptsd_support.services.care_plans import generate_care_plan, list_care_plans, save_care_plan
@@ -22,7 +22,7 @@ from ptsd_support.services.cases import (
 )
 from ptsd_support.services.differential import build_differential_diagnosis
 from ptsd_support.services.guidelines import list_guideline_recommendations, list_guidelines
-from ptsd_support.services.jobs import enqueue_job, get_job, list_jobs
+from ptsd_support.services.jobs import enqueue_job, get_job, list_jobs, retry_job
 from ptsd_support.services.notes import draft_clinician_note, list_note_drafts, save_note_draft
 from ptsd_support.services.recommendations import build_support_plan
 from ptsd_support.services.retrieval import get_ingest_summary, search_articles
@@ -96,6 +96,12 @@ def _allowed_roles(method: str, path: str) -> set[str] | None:
     if path.startswith("/jobs/"):
         return {"admin"}
     return {"clinician", "admin"}
+
+
+def _case_scope(actor: dict | None) -> set[str] | None:
+    if actor is None or actor.get("role") == "admin":
+        return None
+    return actor_org_keys(actor)
 
 
 def create_app(config: AppConfig):
@@ -269,6 +275,29 @@ def create_app(config: AppConfig):
                 )
                 return response
 
+            if method == "POST" and path.startswith("/jobs/") and path.endswith("/retry"):
+                job_id = path.split("/")[2]
+                payload = retry_job(
+                    config.queue_dir or config.db_path.parent / "jobs",
+                    config.db_path,
+                    job_id,
+                )
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "job_id": job_id,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
             if method == "POST" and path == "/jobs":
                 data = _read_json(environ)
                 payload = dict(data.get("payload") or {})
@@ -331,7 +360,11 @@ def create_app(config: AppConfig):
 
             if method == "GET" and path == "/cases":
                 payload = {
-                    "rows": list_cases(config.db_path, patient_id=query.get("patient_id", [None])[0]),
+                    "rows": list_cases(
+                        config.db_path,
+                        patient_id=query.get("patient_id", [None])[0],
+                        organization_keys=_case_scope(actor),
+                    ),
                     "request_id": request_id,
                 }
                 response = _json_response(start_response, "200 OK", payload)
@@ -351,6 +384,7 @@ def create_app(config: AppConfig):
 
             if method == "POST" and path == "/cases":
                 case = _read_json(environ)
+                case.setdefault("organization_key", actor.get("default_org_key") if actor else "default-org")
                 payload = create_case(config.db_path, case)
                 payload["request_id"] = request_id
                 append_audit_event(
@@ -373,7 +407,14 @@ def create_app(config: AppConfig):
 
             if method == "GET" and path.startswith("/cases/") and path.endswith("/reviews"):
                 case_key = path.split("/")[2]
-                payload = {"rows": list_case_reviews(config.db_path, case_key), "request_id": request_id}
+                payload = {
+                    "rows": list_case_reviews(
+                        config.db_path,
+                        case_key,
+                        organization_keys=_case_scope(actor),
+                    ),
+                    "request_id": request_id,
+                }
                 response = _json_response(start_response, "200 OK", payload)
                 append_request_event(
                     config.request_log_path,
@@ -419,6 +460,7 @@ def create_app(config: AppConfig):
                     review_status=data["review_status"],
                     note=data.get("note", ""),
                     payload=data.get("payload"),
+                    organization_keys=_case_scope(actor),
                 )
                 append_audit_event(
                     config.audit_log_path,
@@ -477,7 +519,11 @@ def create_app(config: AppConfig):
 
             if method == "GET" and path.startswith("/cases/"):
                 case_key = path.split("/")[2]
-                payload = get_case_by_key(config.db_path, case_key)
+                payload = get_case_by_key(
+                    config.db_path,
+                    case_key,
+                    organization_keys=_case_scope(actor),
+                )
                 if payload is None:
                     return _json_response(start_response, "404 Not Found", {"error": "case_not_found", "case_key": case_key, "request_id": request_id})
                 payload["request_id"] = request_id
@@ -546,6 +592,7 @@ def create_app(config: AppConfig):
                             data["case_key"],
                             recommendation_domain=domain,
                             payload=payload,
+                            organization_keys=_case_scope(actor),
                         )
                 append_audit_event(
                     config.audit_log_path,

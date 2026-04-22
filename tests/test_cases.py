@@ -62,6 +62,23 @@ class CaseServiceTests(unittest.TestCase):
             self.assertEqual(review["payload"], {"risk": "unclear"})
             self.assertEqual(list_case_reviews(db_path, created["case_key"])[0]["payload"], {"risk": "unclear"})
             self.assertEqual(rec["payload"], {"status": "review"})
+            self.assertEqual(created["organization_key"], "default-org")
+
+    def test_case_scope_can_filter_by_organization(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "cases-scope.db"
+            initialize_database(db_path)
+            case_a = create_case(db_path, {"patient_id": "patient-a", "organization_key": "org-a"})
+            create_case(db_path, {"patient_id": "patient-b", "organization_key": "org-b"})
+
+            scoped = list_cases(db_path, organization_keys={"org-a"})
+            fetched = get_case_by_key(db_path, case_a["case_key"], organization_keys={"org-a"})
+            hidden = get_case_by_key(db_path, case_a["case_key"], organization_keys={"org-b"})
+
+            self.assertEqual(len(scoped), 1)
+            self.assertEqual(scoped[0]["patient_id"], "patient-a")
+            self.assertIsNotNone(fetched)
+            self.assertIsNone(hidden)
 
 
 if __name__ == "__main__":

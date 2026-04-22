@@ -55,8 +55,8 @@ def create_case(db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
             INSERT INTO patient_cases(
                 case_key, patient_id, clinician_id, age, trauma_exposure_summary,
                 symptom_duration_weeks, functional_impairment, symptoms_json,
-                comorbidities_json, medications_json, flags_json, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                comorbidities_json, medications_json, flags_json, status, organization_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 case_key,
@@ -71,6 +71,7 @@ def create_case(db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
                 _serialize_list(payload.get("medications")),
                 _serialize_dict(payload.get("flags")),
                 payload.get("status", "open"),
+                payload.get("organization_key", "default-org"),
             ),
         )
         conn.commit()
@@ -79,14 +80,27 @@ def create_case(db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
         conn.close()
 
 
-def get_case_by_key(db_path: str | Path, case_key: str) -> dict[str, Any] | None:
+def get_case_by_key(
+    db_path: str | Path,
+    case_key: str,
+    *,
+    organization_keys: set[str] | None = None,
+) -> dict[str, Any] | None:
     conn = connect(db_path)
     try:
-        row = _fetch_one_as_dict(
-            conn,
-            "SELECT * FROM patient_cases WHERE case_key = ?",
-            (case_key,),
-        )
+        if organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            row = _fetch_one_as_dict(
+                conn,
+                f"SELECT * FROM patient_cases WHERE case_key = ? AND organization_key IN ({placeholders})",
+                (case_key, *sorted(organization_keys)),
+            )
+        else:
+            row = _fetch_one_as_dict(
+                conn,
+                "SELECT * FROM patient_cases WHERE case_key = ?",
+                (case_key,),
+            )
         if row is None:
             return None
         return _decode_json_fields(row, "symptoms_json", "comorbidities_json", "medications_json", "flags_json")
@@ -94,14 +108,33 @@ def get_case_by_key(db_path: str | Path, case_key: str) -> dict[str, Any] | None
         conn.close()
 
 
-def list_cases(db_path: str | Path, patient_id: str | None = None) -> list[dict[str, Any]]:
+def list_cases(
+    db_path: str | Path,
+    patient_id: str | None = None,
+    *,
+    organization_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
     conn = connect(db_path)
     try:
-        if patient_id:
+        if patient_id and organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            rows = _fetch_all_as_dicts(
+                conn,
+                f"SELECT * FROM patient_cases WHERE patient_id = ? AND organization_key IN ({placeholders}) ORDER BY updated_at DESC",
+                (patient_id, *sorted(organization_keys)),
+            )
+        elif patient_id:
             rows = _fetch_all_as_dicts(
                 conn,
                 "SELECT * FROM patient_cases WHERE patient_id = ? ORDER BY updated_at DESC",
                 (patient_id,),
+            )
+        elif organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            rows = _fetch_all_as_dicts(
+                conn,
+                f"SELECT * FROM patient_cases WHERE organization_key IN ({placeholders}) ORDER BY updated_at DESC",
+                tuple(sorted(organization_keys)),
             )
         else:
             rows = _fetch_all_as_dicts(
@@ -125,14 +158,23 @@ def add_case_review(
     review_status: str,
     note: str = "",
     payload: dict[str, Any] | None = None,
+    organization_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        case_row = _fetch_one_as_dict(
-            conn,
-            "SELECT id FROM patient_cases WHERE case_key = ?",
-            (case_key,),
-        )
+        if organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            case_row = _fetch_one_as_dict(
+                conn,
+                f"SELECT id FROM patient_cases WHERE case_key = ? AND organization_key IN ({placeholders})",
+                (case_key, *sorted(organization_keys)),
+            )
+        else:
+            case_row = _fetch_one_as_dict(
+                conn,
+                "SELECT id FROM patient_cases WHERE case_key = ?",
+                (case_key,),
+            )
         if case_row is None:
             raise ValueError(f"Unknown case_key: {case_key}")
         conn.execute(
@@ -158,14 +200,27 @@ def add_case_review(
         conn.close()
 
 
-def list_case_reviews(db_path: str | Path, case_key: str) -> list[dict[str, Any]]:
+def list_case_reviews(
+    db_path: str | Path,
+    case_key: str,
+    *,
+    organization_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
     conn = connect(db_path)
     try:
-        case_row = _fetch_one_as_dict(
-            conn,
-            "SELECT id FROM patient_cases WHERE case_key = ?",
-            (case_key,),
-        )
+        if organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            case_row = _fetch_one_as_dict(
+                conn,
+                f"SELECT id FROM patient_cases WHERE case_key = ? AND organization_key IN ({placeholders})",
+                (case_key, *sorted(organization_keys)),
+            )
+        else:
+            case_row = _fetch_one_as_dict(
+                conn,
+                "SELECT id FROM patient_cases WHERE case_key = ?",
+                (case_key,),
+            )
         if case_row is None:
             return []
         rows = _fetch_all_as_dicts(
@@ -184,14 +239,23 @@ def record_case_recommendation(
     *,
     recommendation_domain: str,
     payload: dict[str, Any],
+    organization_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        case_row = _fetch_one_as_dict(
-            conn,
-            "SELECT id FROM patient_cases WHERE case_key = ?",
-            (case_key,),
-        )
+        if organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            case_row = _fetch_one_as_dict(
+                conn,
+                f"SELECT id FROM patient_cases WHERE case_key = ? AND organization_key IN ({placeholders})",
+                (case_key, *sorted(organization_keys)),
+            )
+        else:
+            case_row = _fetch_one_as_dict(
+                conn,
+                "SELECT id FROM patient_cases WHERE case_key = ?",
+                (case_key,),
+            )
         if case_row is None:
             raise ValueError(f"Unknown case_key: {case_key}")
         conn.execute(

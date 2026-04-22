@@ -43,6 +43,9 @@ def _persist_job_status(
     payload: dict[str, Any],
     queue_path: str | None,
     requested_by: str | None = None,
+    attempt_count: int | None = None,
+    max_attempts: int | None = None,
+    next_attempt_at: str | None = None,
     started_at: str | None = None,
     finished_at: str | None = None,
     result: dict[str, Any] | None = None,
@@ -57,13 +60,17 @@ def _persist_job_status(
             """
             INSERT INTO job_runs(
                 job_id, job_type, status, queue_path, payload_json, requested_by,
+                attempt_count, max_attempts, next_attempt_at,
                 started_at, finished_at, result_json, error_text
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 status = excluded.status,
                 queue_path = excluded.queue_path,
                 payload_json = excluded.payload_json,
                 requested_by = COALESCE(excluded.requested_by, job_runs.requested_by),
+                attempt_count = COALESCE(excluded.attempt_count, job_runs.attempt_count),
+                max_attempts = COALESCE(excluded.max_attempts, job_runs.max_attempts),
+                next_attempt_at = COALESCE(excluded.next_attempt_at, job_runs.next_attempt_at),
                 started_at = COALESCE(excluded.started_at, job_runs.started_at),
                 finished_at = COALESCE(excluded.finished_at, job_runs.finished_at),
                 result_json = COALESCE(excluded.result_json, job_runs.result_json),
@@ -76,6 +83,9 @@ def _persist_job_status(
                 queue_path,
                 json.dumps(payload, ensure_ascii=True),
                 requested_by,
+                attempt_count,
+                max_attempts,
+                next_attempt_at,
                 started_at,
                 finished_at,
                 json.dumps(result, ensure_ascii=True) if result is not None else None,
@@ -95,6 +105,7 @@ def enqueue_job(
     requested_by: str | None = None,
 ) -> dict[str, Any]:
     pending, _, _, _ = ensure_job_dirs(queue_dir)
+    max_attempts = int(payload.get("max_attempts", 1) or 1)
     job = {
         "job_id": str(uuid.uuid4()),
         "job_type": job_type,
@@ -102,6 +113,8 @@ def enqueue_job(
         "status": "pending",
         "created_at": _utcnow(),
         "requested_by": requested_by,
+        "attempt_count": 0,
+        "max_attempts": max_attempts,
     }
     path = pending / f"{job['created_at'].replace(':', '-')}__{job['job_id']}.json"
     path.write_text(json.dumps(job, ensure_ascii=True, indent=2), encoding="utf-8")
@@ -113,6 +126,8 @@ def enqueue_job(
         payload=payload,
         queue_path=str(path),
         requested_by=requested_by,
+        attempt_count=0,
+        max_attempts=max_attempts,
     )
     return job
 
@@ -130,6 +145,7 @@ def process_next_job(queue_dir: str | Path) -> dict[str, Any] | None:
     started_at = _utcnow()
     job["status"] = "running"
     job["started_at"] = started_at
+    job["attempt_count"] = int(job.get("attempt_count", 0)) + 1
     running_path.write_text(json.dumps(job, ensure_ascii=True, indent=2), encoding="utf-8")
     _persist_job_status(
         job["payload"].get("db_path"),
@@ -139,6 +155,8 @@ def process_next_job(queue_dir: str | Path) -> dict[str, Any] | None:
         payload=job["payload"],
         queue_path=str(running_path),
         requested_by=job.get("requested_by"),
+        attempt_count=job["attempt_count"],
+        max_attempts=job.get("max_attempts", 1),
         started_at=started_at,
     )
     try:
@@ -155,14 +173,37 @@ def process_next_job(queue_dir: str | Path) -> dict[str, Any] | None:
             payload=job["payload"],
             queue_path=str(target),
             requested_by=job.get("requested_by"),
+            attempt_count=job["attempt_count"],
+            max_attempts=job.get("max_attempts", 1),
             started_at=job.get("started_at"),
             finished_at=job["finished_at"],
             result=result,
         )
     except Exception as exc:
+        job["error"] = str(exc)
+        if int(job.get("attempt_count", 1)) < int(job.get("max_attempts", 1)):
+            job["status"] = "pending"
+            job["next_attempt_at"] = _utcnow()
+            retry_path = pending / running_path.name
+            retry_path.write_text(json.dumps(job, ensure_ascii=True, indent=2), encoding="utf-8")
+            _persist_job_status(
+                job["payload"].get("db_path"),
+                job_id=job["job_id"],
+                job_type=job["job_type"],
+                status="pending",
+                payload=job["payload"],
+                queue_path=str(retry_path),
+                requested_by=job.get("requested_by"),
+                attempt_count=job["attempt_count"],
+                max_attempts=job.get("max_attempts", 1),
+                next_attempt_at=job["next_attempt_at"],
+                started_at=job.get("started_at"),
+                error_text=job["error"],
+            )
+            running_path.unlink()
+            return job
         job["status"] = "failed"
         job["finished_at"] = _utcnow()
-        job["error"] = str(exc)
         target = failed / running_path.name
         _persist_job_status(
             job["payload"].get("db_path"),
@@ -172,6 +213,8 @@ def process_next_job(queue_dir: str | Path) -> dict[str, Any] | None:
             payload=job["payload"],
             queue_path=str(target),
             requested_by=job.get("requested_by"),
+            attempt_count=job["attempt_count"],
+            max_attempts=job.get("max_attempts", 1),
             started_at=job.get("started_at"),
             finished_at=job["finished_at"],
             error_text=job["error"],
@@ -187,7 +230,8 @@ def get_job(db_path: str | Path, job_id: str) -> dict[str, Any] | None:
         row = conn.execute(
             """
             SELECT job_id, job_type, status, queue_path, payload_json, requested_by,
-                   created_at, started_at, finished_at, result_json, error_text
+                   created_at, started_at, finished_at, result_json, error_text,
+                   attempt_count, max_attempts, next_attempt_at
             FROM job_runs
             WHERE job_id = ?
             """,
@@ -218,7 +262,8 @@ def list_jobs(
             rows = conn.execute(
                 """
                 SELECT job_id, job_type, status, queue_path, payload_json, requested_by,
-                       created_at, started_at, finished_at, result_json, error_text
+                       created_at, started_at, finished_at, result_json, error_text,
+                       attempt_count, max_attempts, next_attempt_at
                 FROM job_runs
                 WHERE status = ?
                 ORDER BY created_at DESC, id DESC
@@ -230,7 +275,8 @@ def list_jobs(
             rows = conn.execute(
                 """
                 SELECT job_id, job_type, status, queue_path, payload_json, requested_by,
-                       created_at, started_at, finished_at, result_json, error_text
+                       created_at, started_at, finished_at, result_json, error_text,
+                       attempt_count, max_attempts, next_attempt_at
                 FROM job_runs
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
@@ -249,6 +295,21 @@ def list_jobs(
         return items
     finally:
         conn.close()
+
+
+def retry_job(queue_dir: str | Path, db_path: str | Path, job_id: str) -> dict[str, Any]:
+    job = get_job(db_path, job_id)
+    if job is None:
+        raise ValueError(f"Unknown job_id: {job_id}")
+    payload = dict(job["payload"])
+    payload.setdefault("db_path", str(Path(db_path).expanduser().resolve()))
+    payload["max_attempts"] = max(int(job.get("max_attempts", 1)), int(job.get("attempt_count", 0)) + 1)
+    return enqueue_job(
+        queue_dir,
+        job["job_type"],
+        payload,
+        requested_by=job.get("requested_by"),
+    )
 
 
 def _dispatch(job: dict[str, Any]) -> dict[str, Any]:

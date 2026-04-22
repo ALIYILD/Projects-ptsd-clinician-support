@@ -91,6 +91,33 @@ class JobTests(unittest.TestCase):
             self.assertEqual(payload["status"], "done")
             self.assertIn("result", payload)
 
+    def test_failed_job_requeues_until_max_attempts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue_dir = Path(tmpdir) / "jobs-retry"
+            db_path = Path(tmpdir) / "jobs-retry.db"
+            job = enqueue_job(
+                queue_dir,
+                "ingest_guidelines",
+                {"db_path": str(db_path), "seed_path": str(Path(tmpdir) / "missing.json"), "max_attempts": 2},
+            )
+            first = process_next_job(queue_dir)
+            self.assertEqual(first["status"], "pending")
+            self.assertEqual(first["attempt_count"], 1)
+            second = process_next_job(queue_dir)
+            self.assertEqual(second["status"], "failed")
+            self.assertEqual(second["attempt_count"], 2)
+            conn = connect(db_path)
+            try:
+                persisted = conn.execute(
+                    "SELECT status, attempt_count, max_attempts FROM job_runs WHERE job_id = ?",
+                    (job["job_id"],),
+                ).fetchone()
+                self.assertEqual(persisted["status"], "failed")
+                self.assertEqual(persisted["attempt_count"], 2)
+                self.assertEqual(persisted["max_attempts"], 2)
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

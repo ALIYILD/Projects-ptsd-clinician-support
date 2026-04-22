@@ -6,7 +6,13 @@ from io import BytesIO
 from pathlib import Path
 
 from ptsd_support.api.app import AppConfig, create_app
-from ptsd_support.services.auth import authenticate_token, create_api_token, create_user
+from ptsd_support.services.auth import (
+    add_user_membership,
+    authenticate_token,
+    create_api_token,
+    create_organization,
+    create_user,
+)
 
 
 class AuthTests(unittest.TestCase):
@@ -24,6 +30,30 @@ class AuthTests(unittest.TestCase):
             self.assertIsNotNone(actor)
             self.assertEqual(actor["user_key"], "clinician-1")
             self.assertEqual(actor["role"], "clinician")
+            self.assertEqual(actor["default_org_key"], "default-org")
+            self.assertTrue(actor["organizations"])
+
+    def test_user_can_have_named_org_membership(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "auth-org.db"
+            create_user(
+                db_path,
+                user_key="clinician-2",
+                display_name="Clinician Two",
+                role="clinician",
+            )
+            create_organization(db_path, org_key="clinic-a", name="Clinic A")
+            add_user_membership(
+                db_path,
+                user_key="clinician-2",
+                org_key="clinic-a",
+                membership_role="clinician",
+                is_default=True,
+            )
+            token = create_api_token(db_path, user_key="clinician-2", label="org")
+            actor = authenticate_token(db_path, token["token"])
+            self.assertEqual(actor["default_org_key"], "clinic-a")
+            self.assertIn("clinic-a", {org["org_key"] for org in actor["organizations"]})
 
     def test_api_requires_auth_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:

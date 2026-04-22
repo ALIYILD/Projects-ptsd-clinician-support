@@ -16,6 +16,8 @@ Role behavior:
 - `clinician`: clinician workflow endpoints and read access
 - `admin`: full access, including background job management
 
+Users are also organization-scoped unless they are `admin`. Case APIs now default new cases into the actor's default organization, and non-admin actors only see cases inside their memberships.
+
 ## Headers
 
 Use either:
@@ -37,6 +39,19 @@ PYTHONPATH=src python3 scripts/create_api_key.py \
   --label local-admin
 ```
 
+To create or use a named organization and make it the default scope:
+
+```bash
+PYTHONPATH=src python3 scripts/create_api_key.py \
+  --db data/processed/ptsd_support.db \
+  --user-key clinician-1 \
+  --display-name "Clinician One" \
+  --role clinician \
+  --org-key clinic-a \
+  --org-name "Clinic A" \
+  --label clinic-a-primary
+```
+
 The command prints the plaintext token once. Store it securely.
 
 ## Auth Check
@@ -52,3 +67,4 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:8080/auth/me
 - `GET /health` remains unauthenticated.
 - `PTSD_SUPPORT_REQUIRE_AUTH=true` is the recommended default.
 - Tokens are stored as hashes in the database. The plaintext token is only available at creation time.
+- `admin` bypasses organization filters. `viewer` and `clinician` are scoped to their organization memberships.

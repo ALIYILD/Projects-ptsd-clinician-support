@@ -5,6 +5,7 @@ Long-running ingestion should not block the API process.
 This repo now includes a file-backed job queue under:
 
 - `data/processed/jobs/pending`
+- `data/processed/jobs/running`
 - `data/processed/jobs/done`
 - `data/processed/jobs/failed`
 
@@ -37,4 +38,7 @@ PYTHONPATH=src python3 scripts/run_worker.py
 
 - This is a pragmatic local worker implementation.
 - It is intended to decouple ingestion from the API now.
+- Job state is also mirrored into the `job_runs` table for API visibility.
+- Jobs can retry up to `max_attempts` before settling as failed.
+- Admin APIs now expose `POST /jobs`, `GET /jobs`, `GET /jobs/{job_id}`, and `POST /jobs/{job_id}/retry`.
 - The next production step would be a real queue and worker runtime.

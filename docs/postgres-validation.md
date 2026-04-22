@@ -32,3 +32,10 @@ The script prints a step-by-step report. Successful runs emit `OK` for configura
 ## Scope
 
 The script is intended as an operator-facing validation pass for environments where Postgres and `psycopg` may or may not be installed yet. The unit tests for this script are mock-only and do not require a live Postgres server.
+
+For an optional live test path in CI or local ops, set:
+
+```bash
+export PTSD_SUPPORT_TEST_POSTGRES_DSN=postgresql://ptsd:ptsd@127.0.0.1:5432/ptsd_support
+PYTHONPATH=src python3 -m unittest tests.test_postgres_live
+```

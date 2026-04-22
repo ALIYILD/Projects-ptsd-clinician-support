@@ -14,7 +14,7 @@ cd /Users/aliyildirim/Projects/ptsd-clinician-support
 cp .env.example .env
 PYTHONPATH=src python3 scripts/ingest_literature.py --db data/processed/ptsd_support.db --inputs /Users/aliyildirim/ptsd_europepmc_papers.csv /Users/aliyildirim/ptsd_pubmed_only.csv /Users/aliyildirim/ptsd_reviews_or_clinical_trials_only.csv
 PYTHONPATH=src python3 scripts/ingest_guidelines.py --db data/processed/ptsd_support.db --seed data/raw/guidelines/ptsd_guidelines.json
-PYTHONPATH=src python3 scripts/create_api_key.py --db data/processed/ptsd_support.db --user-key admin-1 --display-name "Admin User" --role admin --label local-admin
+PYTHONPATH=src python3 scripts/create_api_key.py --db data/processed/ptsd_support.db --user-key admin-1 --display-name "Admin User" --role admin --org-key clinic-a --org-name "Clinic A" --label local-admin
 PYTHONPATH=src python3 scripts/run_server.py
 ```
 
