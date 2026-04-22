@@ -282,10 +282,17 @@ def create_app(config: AppConfig):
                 return response
 
             if method == "GET" and path == "/admin/audit":
+                filters = {
+                    "event": query.get("event", [None])[0],
+                    "path": query.get("path", [None])[0],
+                    "actor": query.get("actor", [None])[0],
+                    "contains": query.get("contains", [None])[0],
+                }
                 payload = {
                     "rows": read_jsonl_events(
                         config.audit_log_path,
                         limit=int(query.get("limit", ["100"])[0]),
+                        filters=filters,
                     ),
                     "request_id": request_id,
                 }
@@ -304,10 +311,17 @@ def create_app(config: AppConfig):
                 return response
 
             if method == "GET" and path == "/admin/requests":
+                filters = {
+                    "path": query.get("path", [None])[0],
+                    "actor": query.get("actor", [None])[0],
+                    "status": query.get("status", [None])[0],
+                    "contains": query.get("contains", [None])[0],
+                }
                 payload = {
                     "rows": read_jsonl_events(
                         config.request_log_path,
                         limit=int(query.get("limit", ["100"])[0]),
+                        filters=filters,
                     ),
                     "request_id": request_id,
                 }

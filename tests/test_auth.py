@@ -159,6 +159,7 @@ class AuthTests(unittest.TestCase):
 
             def run_request(method: str, path: str, body: bytes = b""):
                 captured = {}
+                path_info, _, query_string = path.partition("?")
 
                 def start_response(status, headers):
                     captured["status"] = status
@@ -166,8 +167,8 @@ class AuthTests(unittest.TestCase):
 
                 environ = {
                     "REQUEST_METHOD": method,
-                    "PATH_INFO": path,
-                    "QUERY_STRING": "",
+                    "PATH_INFO": path_info,
+                    "QUERY_STRING": query_string,
                     "CONTENT_LENGTH": str(len(body)),
                     "wsgi.input": BytesIO(body),
                     "HTTP_AUTHORIZATION": f"Bearer {token['token']}",
@@ -178,6 +179,9 @@ class AuthTests(unittest.TestCase):
             status, _ = run_request("GET", "/auth/me")
             self.assertEqual(status, "200 OK")
             status, body = run_request("GET", "/admin/requests")
+            self.assertEqual(status, "200 OK")
+            self.assertIn(b"/auth/me", body)
+            status, body = run_request("GET", "/admin/requests?path=/auth/me&status=200")
             self.assertEqual(status, "200 OK")
             self.assertIn(b"/auth/me", body)
 

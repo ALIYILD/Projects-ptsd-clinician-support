@@ -126,3 +126,10 @@ curl -X POST \
 - Care plans and note drafts now inherit the same case/org access boundaries as case reads and writes.
 - Tokens can now expire, be revoked, and be rotated without reusing the original secret.
 - Admin-only audit log read endpoints are available at `GET /admin/audit` and `GET /admin/requests`.
+
+Admin log filters:
+
+- `/admin/audit`: `event`, `path`, `actor`, `contains`, `limit`
+- `/admin/requests`: `path`, `actor`, `status`, `contains`, `limit`
+
+Sensitive values such as tokens, secrets, passwords, and authorization headers are redacted before being written to JSONL logs.
