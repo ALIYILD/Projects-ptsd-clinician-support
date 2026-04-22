@@ -3,11 +3,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from ptsd_support.db.adapter import DBConnection, fetch_scalar, insert_and_get_id
 from ptsd_support.db.schema import connect, initialize_database
 
 
@@ -73,17 +73,18 @@ def count_rows(path: Path) -> int:
         return sum(1 for _ in csv.DictReader(handle))
 
 
-def register_source(conn: sqlite3.Connection, source_name: str) -> None:
+def register_source(conn: DBConnection, source_name: str) -> None:
     conn.execute(
         """
-        INSERT OR IGNORE INTO sources(name, source_type, description)
+        INSERT INTO sources(name, source_type, description)
         VALUES (?, ?, ?)
+        ON CONFLICT(name) DO NOTHING
         """,
         (source_name, "literature_export", f"Ingested literature source: {source_name}"),
     )
 
 
-def register_source_file(conn: sqlite3.Connection, path: Path) -> int:
+def register_source_file(conn: DBConnection, path: Path) -> int:
     sha256 = compute_sha256(path)
     row_count = count_rows(path)
     conn.execute(
@@ -98,7 +99,10 @@ def register_source_file(conn: sqlite3.Connection, path: Path) -> int:
         """,
         (str(path), path.name, sha256, "csv", row_count, "0.1.0"),
     )
-    return conn.execute("SELECT id FROM source_files WHERE path = ?", (str(path),)).fetchone()[0]
+    source_file_id = fetch_scalar(conn, "SELECT id FROM source_files WHERE path = ?", (str(path),))
+    if source_file_id is None:
+        raise LookupError(f"Expected source_files row for {path}")
+    return int(source_file_id)
 
 
 def derive_canonical_key(row: dict[str, str], source_name: str) -> tuple[str, str | None, str | None]:
@@ -116,7 +120,7 @@ def derive_canonical_key(row: dict[str, str], source_name: str) -> tuple[str, st
     return f"title:{normalize_title(row.get('title') or '')}", pmid, doi
 
 
-def get_or_create_article(conn: sqlite3.Connection, row: dict[str, str], source_name: str) -> int:
+def get_or_create_article(conn: DBConnection, row: dict[str, str], source_name: str) -> int:
     payload_pmid = (row.get("pmid") or row.get("id") or "").strip() or None
     canonical_key, pmid, doi = derive_canonical_key(row, source_name)
     title = row.get("title") or ""
@@ -136,7 +140,8 @@ def get_or_create_article(conn: sqlite3.Connection, row: dict[str, str], source_
         existing = conn.execute("SELECT id FROM articles WHERE canonical_key = ?", (canonical_key,)).fetchone()
 
     if existing is None:
-        conn.execute(
+        article_id = insert_and_get_id(
+            conn,
             """
             INSERT INTO articles (
                 canonical_key, pmid, doi, title, authors, journal, publication_year,
@@ -157,9 +162,8 @@ def get_or_create_article(conn: sqlite3.Connection, row: dict[str, str], source_
                 normalized_title,
             ),
         )
-        article_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     else:
-        article_id = existing[0]
+        article_id = int(existing["id"])
         conn.execute(
             """
             UPDATE articles
@@ -196,13 +200,17 @@ def get_or_create_article(conn: sqlite3.Connection, row: dict[str, str], source_
     return article_id
 
 
-def replace_article_authors(conn: sqlite3.Connection, article_id: int, authors_value: str | None) -> None:
+def replace_article_authors(conn: DBConnection, article_id: int, authors_value: str | None) -> None:
     if not authors_value:
         return
-    existing = conn.execute(
+    existing = fetch_scalar(
+        conn,
         "SELECT COUNT(*) AS count FROM article_authors WHERE article_id = ?",
         (article_id,),
-    ).fetchone()["count"]
+    )
+    if existing is None:
+        raise LookupError(f"Expected article_authors count for article {article_id}")
+    existing = int(existing)
     if existing:
         return
     authors = [part.strip() for part in authors_value.split(",") if part.strip()]
@@ -216,13 +224,17 @@ def replace_article_authors(conn: sqlite3.Connection, article_id: int, authors_v
         )
 
 
-def replace_publication_types(conn: sqlite3.Connection, article_id: int, value: str | None) -> None:
+def replace_publication_types(conn: DBConnection, article_id: int, value: str | None) -> None:
     if not value:
         return
-    existing = conn.execute(
+    existing = fetch_scalar(
+        conn,
         "SELECT COUNT(*) AS count FROM article_publication_types WHERE article_id = ?",
         (article_id,),
-    ).fetchone()["count"]
+    )
+    if existing is None:
+        raise LookupError(f"Expected article_publication_types count for article {article_id}")
+    existing = int(existing)
     if existing:
         return
     parts = [part.strip() for part in value.replace(";", "|").split("|") if part.strip()]
@@ -236,21 +248,22 @@ def replace_publication_types(conn: sqlite3.Connection, article_id: int, value: 
         )
 
 
-def tag_article_to_ptsd(conn: sqlite3.Connection, article_id: int) -> None:
-    condition_id = conn.execute(
-        "SELECT id FROM conditions WHERE slug = 'ptsd'"
-    ).fetchone()["id"]
+def tag_article_to_ptsd(conn: DBConnection, article_id: int) -> None:
+    condition_id = fetch_scalar(conn, "SELECT id FROM conditions WHERE slug = 'ptsd'")
+    if condition_id is None:
+        raise LookupError("Expected PTSD condition row")
     conn.execute(
         """
-        INSERT OR IGNORE INTO article_condition_tags(article_id, condition_id, tag_source)
+        INSERT INTO article_condition_tags(article_id, condition_id, tag_source)
         VALUES (?, ?, ?)
+        ON CONFLICT(article_id, condition_id, tag_source) DO NOTHING
         """,
         (article_id, condition_id, "seed_import"),
     )
 
 
 def insert_article_source(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     article_id: int,
     row: dict[str, str],
     source_name: str,
@@ -261,10 +274,20 @@ def insert_article_source(
     source_subtype = row.get("source")
     conn.execute(
         """
-        INSERT OR REPLACE INTO article_sources(
+        INSERT INTO article_sources(
             article_id, source_name, source_native_id, source_subtype, source_file_id,
             source_url, raw_row_json, cited_by_count, in_epmc, in_pmc, is_open_access, has_pdf
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_name, source_native_id, source_file_id) DO UPDATE SET
+            article_id = excluded.article_id,
+            source_subtype = excluded.source_subtype,
+            source_url = excluded.source_url,
+            raw_row_json = excluded.raw_row_json,
+            cited_by_count = excluded.cited_by_count,
+            in_epmc = excluded.in_epmc,
+            in_pmc = excluded.in_pmc,
+            is_open_access = excluded.is_open_access,
+            has_pdf = excluded.has_pdf
         """,
         (
             article_id,

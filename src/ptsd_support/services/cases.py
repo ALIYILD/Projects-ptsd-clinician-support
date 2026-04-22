@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,34 @@ def _serialize_list(value: Any) -> str:
 
 def _serialize_dict(value: Any) -> str:
     return json.dumps(value if isinstance(value, dict) else {}, ensure_ascii=True)
+
+
+def _strip_json_suffix(field: str) -> str:
+    return field[:-5] if field.endswith("_json") else field
+
+
+def _row_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, Mapping):
+        return dict(row)
+    if hasattr(row, "_asdict"):
+        return dict(row._asdict())
+    raise TypeError(f"Unsupported row type returned by adapter: {type(row)!r}")
+
+
+def _fetch_one_as_dict(conn: Any, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+    row = conn.execute(query, params).fetchone()
+    return None if row is None else _row_to_dict(row)
+
+
+def _fetch_all_as_dicts(conn: Any, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    return [_row_to_dict(row) for row in conn.execute(query, params).fetchall()]
+
+
+def _decode_json_fields(data: dict[str, Any], *fields: str) -> dict[str, Any]:
+    record = dict(data)
+    for field in fields:
+        record[_strip_json_suffix(field)] = json.loads(record.pop(field))
+    return record
 
 
 def create_case(db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -53,16 +82,14 @@ def create_case(db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
 def get_case_by_key(db_path: str | Path, case_key: str) -> dict[str, Any] | None:
     conn = connect(db_path)
     try:
-        row = conn.execute(
+        row = _fetch_one_as_dict(
+            conn,
             "SELECT * FROM patient_cases WHERE case_key = ?",
             (case_key,),
-        ).fetchone()
+        )
         if row is None:
             return None
-        data = dict(row)
-        for field in ["symptoms_json", "comorbidities_json", "medications_json", "flags_json"]:
-            data[field.removesuffix("_json")] = json.loads(data.pop(field))
-        return data
+        return _decode_json_fields(row, "symptoms_json", "comorbidities_json", "medications_json", "flags_json")
     finally:
         conn.close()
 
@@ -71,21 +98,20 @@ def list_cases(db_path: str | Path, patient_id: str | None = None) -> list[dict[
     conn = connect(db_path)
     try:
         if patient_id:
-            rows = conn.execute(
+            rows = _fetch_all_as_dicts(
+                conn,
                 "SELECT * FROM patient_cases WHERE patient_id = ? ORDER BY updated_at DESC",
                 (patient_id,),
-            ).fetchall()
+            )
         else:
-            rows = conn.execute(
+            rows = _fetch_all_as_dicts(
+                conn,
                 "SELECT * FROM patient_cases ORDER BY updated_at DESC"
-            ).fetchall()
-        results = []
-        for row in rows:
-            data = dict(row)
-            for field in ["symptoms_json", "comorbidities_json", "medications_json", "flags_json"]:
-                data[field.removesuffix("_json")] = json.loads(data.pop(field))
-            results.append(data)
-        return results
+            )
+        return [
+            _decode_json_fields(row, "symptoms_json", "comorbidities_json", "medications_json", "flags_json")
+            for row in rows
+        ]
     finally:
         conn.close()
 
@@ -102,10 +128,11 @@ def add_case_review(
 ) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        case_row = conn.execute(
+        case_row = _fetch_one_as_dict(
+            conn,
             "SELECT id FROM patient_cases WHERE case_key = ?",
             (case_key,),
-        ).fetchone()
+        )
         if case_row is None:
             raise ValueError(f"Unknown case_key: {case_key}")
         conn.execute(
@@ -120,13 +147,13 @@ def add_case_review(
             (case_row["id"],),
         )
         conn.commit()
-        review = conn.execute(
+        review = _fetch_one_as_dict(
+            conn,
             "SELECT * FROM case_reviews WHERE case_id = ? ORDER BY id DESC LIMIT 1",
             (case_row["id"],),
-        ).fetchone()
-        result = dict(review)
-        result["payload"] = json.loads(result.pop("payload_json"))
-        return result
+        )
+        assert review is not None
+        return _decode_json_fields(review, "payload_json")
     finally:
         conn.close()
 
@@ -134,22 +161,19 @@ def add_case_review(
 def list_case_reviews(db_path: str | Path, case_key: str) -> list[dict[str, Any]]:
     conn = connect(db_path)
     try:
-        case_row = conn.execute(
+        case_row = _fetch_one_as_dict(
+            conn,
             "SELECT id FROM patient_cases WHERE case_key = ?",
             (case_key,),
-        ).fetchone()
+        )
         if case_row is None:
             return []
-        rows = conn.execute(
+        rows = _fetch_all_as_dicts(
+            conn,
             "SELECT * FROM case_reviews WHERE case_id = ? ORDER BY created_at DESC, id DESC",
             (case_row["id"],),
-        ).fetchall()
-        results = []
-        for row in rows:
-            data = dict(row)
-            data["payload"] = json.loads(data.pop("payload_json"))
-            results.append(data)
-        return results
+        )
+        return [_decode_json_fields(row, "payload_json") for row in rows]
     finally:
         conn.close()
 
@@ -163,10 +187,11 @@ def record_case_recommendation(
 ) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        case_row = conn.execute(
+        case_row = _fetch_one_as_dict(
+            conn,
             "SELECT id FROM patient_cases WHERE case_key = ?",
             (case_key,),
-        ).fetchone()
+        )
         if case_row is None:
             raise ValueError(f"Unknown case_key: {case_key}")
         conn.execute(
@@ -181,12 +206,12 @@ def record_case_recommendation(
             (case_row["id"],),
         )
         conn.commit()
-        row = conn.execute(
+        row = _fetch_one_as_dict(
+            conn,
             "SELECT * FROM case_recommendation_history WHERE case_id = ? ORDER BY id DESC LIMIT 1",
             (case_row["id"],),
-        ).fetchone()
-        result = dict(row)
-        result["payload"] = json.loads(result.pop("payload_json"))
-        return result
+        )
+        assert row is not None
+        return _decode_json_fields(row, "payload_json")
     finally:
         conn.close()

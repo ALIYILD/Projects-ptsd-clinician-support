@@ -57,6 +57,11 @@ class CaseServiceTests(unittest.TestCase):
                 payload={"status": "review"},
             )
             self.assertEqual(rec["recommendation_domain"], "psychotherapy")
+            self.assertEqual(fetched["symptoms"], ["nightmares", "avoidance"])
+            self.assertEqual(fetched["flags"], {"nightmares": True})
+            self.assertEqual(review["payload"], {"risk": "unclear"})
+            self.assertEqual(list_case_reviews(db_path, created["case_key"])[0]["payload"], {"risk": "unclear"})
+            self.assertEqual(rec["payload"], {"status": "review"})
 
 
 if __name__ == "__main__":

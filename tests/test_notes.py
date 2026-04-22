@@ -35,7 +35,10 @@ class NotesTests(unittest.TestCase):
             )
             saved = save_note_draft(db, case_key=created["case_key"], note_type="assessment", payload=payload)
             self.assertEqual(saved["note_type"], "assessment")
-            self.assertEqual(len(list_note_drafts(db, case_key=created["case_key"])), 1)
+            drafts = list_note_drafts(db, case_key=created["case_key"])
+            self.assertEqual(len(drafts), 1)
+            self.assertEqual(saved["payload"], payload)
+            self.assertEqual(drafts[0]["payload"], payload)
 
 
 if __name__ == "__main__":

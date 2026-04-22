@@ -37,7 +37,10 @@ class CarePlanTests(unittest.TestCase):
             )
             saved = save_care_plan(db, case_key=created["case_key"], plan_type="home_tasks", payload=payload)
             self.assertEqual(saved["plan_type"], "home_tasks")
-            self.assertEqual(len(list_care_plans(db, case_key=created["case_key"])), 1)
+            plans = list_care_plans(db, case_key=created["case_key"])
+            self.assertEqual(len(plans), 1)
+            self.assertEqual(saved["payload"], payload)
+            self.assertEqual(plans[0]["payload"], payload)
 
 
 if __name__ == "__main__":

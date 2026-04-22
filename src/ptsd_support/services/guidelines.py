@@ -1,22 +1,35 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from ptsd_support.db.schema import connect
 
 
+def _row_to_dict(row: object) -> dict:
+    if isinstance(row, Mapping):
+        return dict(row)
+    if hasattr(row, "_asdict"):
+        return dict(row._asdict())
+    raise TypeError(f"Unsupported row type returned by adapter: {type(row)!r}")
+
+
+def _fetch_all_as_dicts(conn: object, query: str, params: tuple[object, ...] = ()) -> list[dict]:
+    return [_row_to_dict(row) for row in conn.execute(query, params).fetchall()]
+
+
 def list_guidelines(db_path: str | Path) -> list[dict]:
     conn = connect(db_path)
     try:
-        rows = conn.execute(
+        return _fetch_all_as_dicts(
+            conn,
             """
             SELECT guideline_key, source_name, title, organization, version_label,
                    publication_date, review_date, source_url, jurisdiction, status
             FROM guidelines
             ORDER BY publication_date DESC, id DESC
             """
-        ).fetchall()
-        return [dict(row) for row in rows]
+        )
     finally:
         conn.close()
 
@@ -39,7 +52,8 @@ def list_guideline_recommendations(
             clauses.append("gr.modality = ?")
             params.append(modality)
         params.append(limit)
-        rows = conn.execute(
+        return _fetch_all_as_dicts(
+            conn,
             f"""
             SELECT
                 g.guideline_key,
@@ -59,8 +73,7 @@ def list_guideline_recommendations(
             ORDER BY g.organization, gr.clinical_domain, gr.id
             LIMIT ?
             """,
-            params,
-        ).fetchall()
-        return [dict(row) for row in rows]
+            tuple(params),
+        )
     finally:
         conn.close()

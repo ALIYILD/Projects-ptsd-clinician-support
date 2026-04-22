@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ptsd_support.db.adapter import DBRow, fetch_scalar
 from ptsd_support.db.schema import connect
 
 
 def _like_query(query: str) -> str:
     return f"%{' '.join(query.strip().lower().split())}%"
+
+
+def _row_to_dict(row: DBRow) -> dict[str, object]:
+    if row is None:
+        raise LookupError("Expected a database row")
+    return dict(row)
 
 
 def search_titles(db_path: str | Path, query: str, limit: int = 20) -> list[dict]:
@@ -22,7 +29,7 @@ def search_titles(db_path: str | Path, query: str, limit: int = 20) -> list[dict
             """,
             (_like_query(query), limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [_row_to_dict(row) for row in rows]
     finally:
         conn.close()
 
@@ -86,6 +93,12 @@ def search_articles(
             params.extend([value.strip().lower() for value in publication_types])
 
         params.append(limit)
+        publication_types_agg = "GROUP_CONCAT(DISTINCT apt.publication_type)"
+        sources_agg = "GROUP_CONCAT(DISTINCT src.source_name)"
+        if getattr(conn, "engine", "sqlite") == "postgres":
+            publication_types_agg = "string_agg(DISTINCT apt.publication_type, ',')"
+            sources_agg = "string_agg(DISTINCT src.source_name, ',')"
+
         rows = conn.execute(
             f"""
             SELECT
@@ -99,8 +112,8 @@ def search_articles(
                 a.is_open_access,
                 a.has_fulltext_link,
                 a.canonical_key,
-                GROUP_CONCAT(DISTINCT apt.publication_type) AS publication_types,
-                GROUP_CONCAT(DISTINCT src.source_name) AS sources
+                {publication_types_agg} AS publication_types,
+                {sources_agg} AS sources
             FROM articles a
             LEFT JOIN article_publication_types apt ON apt.article_id = a.id
             LEFT JOIN article_sources src ON src.article_id = a.id
@@ -111,7 +124,7 @@ def search_articles(
             """,
             params,
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [_row_to_dict(row) for row in rows]
     finally:
         conn.close()
 
@@ -137,7 +150,10 @@ def get_ingest_summary(db_path: str | Path) -> dict[str, int]:
             "source_files",
             "ingest_runs",
         ]:
-            summary[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            count = fetch_scalar(conn, f"SELECT COUNT(*) FROM {table}")
+            if count is None:
+                raise LookupError(f"Expected count row for {table}")
+            summary[table] = int(count)
         return summary
     finally:
         conn.close()

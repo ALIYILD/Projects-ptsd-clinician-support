@@ -5,15 +5,23 @@ from pathlib import Path
 from ptsd_support.db.adapter import DatabaseSettings, connect
 
 
-MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+BASE_MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
 
-def _list_migration_files() -> list[Path]:
-    return sorted(MIGRATIONS_DIR.glob("*.sql"))
+def _migration_dir_for(engine: str) -> Path:
+    engine_dir = BASE_MIGRATIONS_DIR / engine
+    if engine_dir.exists():
+        return engine_dir
+    return BASE_MIGRATIONS_DIR
+
+
+def _list_migration_files(engine: str) -> list[Path]:
+    return sorted(_migration_dir_for(engine).glob("*.sql"))
 
 
 def run_migrations(target: DatabaseSettings | str | Path) -> None:
-    conn = connect(target)
+    settings = target if isinstance(target, DatabaseSettings) else DatabaseSettings.from_target(target)
+    conn = connect(settings)
     try:
         conn.execute(
             """
@@ -27,7 +35,7 @@ def run_migrations(target: DatabaseSettings | str | Path) -> None:
             row[0]
             for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
         }
-        for migration in _list_migration_files():
+        for migration in _list_migration_files(settings.engine):
             version = migration.name
             if version in applied:
                 continue

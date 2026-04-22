@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,29 @@ HOME_TASK_DISCLAIMER = (
     "Between-session tasks should be assigned only after the clinician confirms stability, "
     "readiness, literacy, access, and a stop plan if distress escalates."
 )
+
+
+def _row_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, Mapping):
+        return dict(row)
+    if hasattr(row, "_asdict"):
+        return dict(row._asdict())
+    raise TypeError(f"Unsupported row type returned by adapter: {type(row)!r}")
+
+
+def _fetch_one_as_dict(conn: Any, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+    row = conn.execute(query, params).fetchone()
+    return None if row is None else _row_to_dict(row)
+
+
+def _fetch_all_as_dicts(conn: Any, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    return [_row_to_dict(row) for row in conn.execute(query, params).fetchall()]
+
+
+def _decode_payload_row(row: dict[str, Any]) -> dict[str, Any]:
+    record = dict(row)
+    record["payload"] = json.loads(record.pop("payload_json"))
+    return record
 
 
 def _list_codes(items: list[dict[str, Any]] | None, key: str) -> list[str]:
@@ -284,10 +308,11 @@ def save_care_plan(
 ) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        case_row = conn.execute(
+        case_row = _fetch_one_as_dict(
+            conn,
             "SELECT id FROM patient_cases WHERE case_key = ?",
             (case_key,),
-        ).fetchone()
+        )
         if case_row is None:
             raise ValueError(f"Unknown case_key: {case_key}")
         conn.execute(
@@ -304,13 +329,13 @@ def save_care_plan(
             ),
         )
         conn.commit()
-        row = conn.execute(
+        row = _fetch_one_as_dict(
+            conn,
             "SELECT * FROM care_plans WHERE case_id = ? ORDER BY id DESC LIMIT 1",
             (case_row["id"],),
-        ).fetchone()
-        result = dict(row)
-        result["payload"] = json.loads(result.pop("payload_json"))
-        return result
+        )
+        assert row is not None
+        return _decode_payload_row(row)
     finally:
         conn.close()
 
@@ -318,21 +343,18 @@ def save_care_plan(
 def list_care_plans(db_path: str | Path, *, case_key: str) -> list[dict[str, Any]]:
     conn = connect(db_path)
     try:
-        case_row = conn.execute(
+        case_row = _fetch_one_as_dict(
+            conn,
             "SELECT id FROM patient_cases WHERE case_key = ?",
             (case_key,),
-        ).fetchone()
+        )
         if case_row is None:
             return []
-        rows = conn.execute(
+        rows = _fetch_all_as_dicts(
+            conn,
             "SELECT * FROM care_plans WHERE case_id = ? ORDER BY created_at DESC, id DESC",
             (case_row["id"],),
-        ).fetchall()
-        results = []
-        for row in rows:
-            data = dict(row)
-            data["payload"] = json.loads(data.pop("payload_json"))
-            results.append(data)
-        return results
+        )
+        return [_decode_payload_row(row) for row in rows]
     finally:
         conn.close()
