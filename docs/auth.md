@@ -25,6 +25,14 @@ Use either:
 - `Authorization: Bearer <token>`
 - `X-API-Key: <token>`
 
+API token endpoints:
+
+- `GET /auth/tokens`
+- `POST /auth/tokens`
+- `POST /auth/tokens/revoke`
+
+For non-admin users, these endpoints are automatically limited to the current actor's own tokens.
+
 ## Bootstrap
 
 Create a user and issue a token:
@@ -62,9 +70,36 @@ Inspect the current actor:
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:8080/auth/me
 ```
 
+List tokens for the current actor:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8080/auth/tokens
+```
+
+Issue a new token for the current actor:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"secondary"}' \
+  http://127.0.0.1:8080/auth/tokens
+```
+
+Revoke a token by prefix:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"token_prefix":"ptsd_abcd"}' \
+  http://127.0.0.1:8080/auth/tokens/revoke
+```
+
 ## Notes
 
 - `GET /health` remains unauthenticated.
 - `PTSD_SUPPORT_REQUIRE_AUTH=true` is the recommended default.
 - Tokens are stored as hashes in the database. The plaintext token is only available at creation time.
 - `admin` bypasses organization filters. `viewer` and `clinician` are scoped to their organization memberships.
+- Care plans and note drafts now inherit the same case/org access boundaries as case reads and writes.

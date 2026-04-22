@@ -40,6 +40,24 @@ class NotesTests(unittest.TestCase):
             self.assertEqual(saved["payload"], payload)
             self.assertEqual(drafts[0]["payload"], payload)
 
+    def test_note_scope_filters_by_case_org(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "notes-scope.db"
+            run_migrations(db)
+            created = create_case(db, {"patient_id": "patient-2", "organization_key": "org-a"})
+            payload = {"note_type": "assessment", "sections": [{"heading": "Context", "content": ["Example"]}]}
+            save_note_draft(
+                db,
+                case_key=created["case_key"],
+                note_type="assessment",
+                payload=payload,
+                organization_keys={"org-a"},
+            )
+            visible = list_note_drafts(db, case_key=created["case_key"], organization_keys={"org-a"})
+            hidden = list_note_drafts(db, case_key=created["case_key"], organization_keys={"org-b"})
+            self.assertEqual(len(visible), 1)
+            self.assertEqual(hidden, [])
+
 
 if __name__ == "__main__":
     unittest.main()

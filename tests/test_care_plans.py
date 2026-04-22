@@ -42,6 +42,24 @@ class CarePlanTests(unittest.TestCase):
             self.assertEqual(saved["payload"], payload)
             self.assertEqual(plans[0]["payload"], payload)
 
+    def test_care_plan_scope_filters_by_case_org(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "care-scope.db"
+            run_migrations(db)
+            created = create_case(db, {"patient_id": "patient-1", "organization_key": "org-a"})
+            payload = {"status": "draft", "home_tasks": [{"title": "Grounding"}]}
+            save_care_plan(
+                db,
+                case_key=created["case_key"],
+                plan_type="home_tasks",
+                payload=payload,
+                organization_keys={"org-a"},
+            )
+            visible = list_care_plans(db, case_key=created["case_key"], organization_keys={"org-a"})
+            hidden = list_care_plans(db, case_key=created["case_key"], organization_keys={"org-b"})
+            self.assertEqual(len(visible), 1)
+            self.assertEqual(hidden, [])
+
 
 if __name__ == "__main__":
     unittest.main()

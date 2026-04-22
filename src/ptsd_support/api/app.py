@@ -8,7 +8,14 @@ from pathlib import Path
 from time import perf_counter
 from urllib.parse import parse_qs
 
-from ptsd_support.services.auth import actor_org_keys, authenticate_token, role_allows
+from ptsd_support.services.auth import (
+    actor_org_keys,
+    authenticate_token,
+    create_api_token,
+    list_api_tokens,
+    revoke_api_token,
+    role_allows,
+)
 from ptsd_support.services.assessment import evaluate_case
 from ptsd_support.services.audit import append_audit_event, append_request_event
 from ptsd_support.services.care_plans import generate_care_plan, list_care_plans, save_care_plan
@@ -89,7 +96,11 @@ def _require_actor(config: AppConfig, environ, start_response, request_id: str, 
 def _allowed_roles(method: str, path: str) -> set[str] | None:
     if method == "GET" and path == "/health":
         return None
-    if method == "GET" and path in {"/literature/search", "/literature/summary", "/guidelines", "/guidelines/recommendations", "/auth/me"}:
+    if method == "GET" and path in {"/literature/search", "/literature/summary", "/guidelines", "/guidelines/recommendations", "/auth/me", "/auth/tokens"}:
+        return {"viewer", "clinician", "admin"}
+    if method == "POST" and path == "/auth/tokens":
+        return {"viewer", "clinician", "admin"}
+    if method == "POST" and path == "/auth/tokens/revoke":
         return {"viewer", "clinician", "admin"}
     if path == "/jobs":
         return {"admin"}
@@ -157,6 +168,80 @@ def create_app(config: AppConfig):
                         "path": path,
                         "status": 200,
                         "actor": actor["user_key"] if actor else None,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "GET" and path == "/auth/tokens":
+                requested_user_key = query.get("user_key", [None])[0]
+                if actor and actor["role"] != "admin":
+                    requested_user_key = actor["user_key"]
+                payload = {
+                    "rows": list_api_tokens(config.db_path, user_key=requested_user_key),
+                    "request_id": request_id,
+                }
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "POST" and path == "/auth/tokens":
+                data = _read_json(environ)
+                target_user_key = data.get("user_key") or (actor["user_key"] if actor else None)
+                if actor and actor["role"] != "admin":
+                    target_user_key = actor["user_key"]
+                payload = create_api_token(
+                    config.db_path,
+                    user_key=target_user_key,
+                    label=data.get("label"),
+                )
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "target_user_key": target_user_key,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "POST" and path == "/auth/tokens/revoke":
+                data = _read_json(environ)
+                target_user_key = data.get("user_key")
+                if actor and actor["role"] != "admin":
+                    target_user_key = actor["user_key"]
+                payload = revoke_api_token(
+                    config.db_path,
+                    token_prefix=data["token_prefix"],
+                    user_key=target_user_key,
+                )
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "token_prefix": data["token_prefix"],
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
                 )
@@ -431,7 +516,14 @@ def create_app(config: AppConfig):
 
             if method == "GET" and path.startswith("/cases/") and path.endswith("/care-plans"):
                 case_key = path.split("/")[2]
-                payload = {"rows": list_care_plans(config.db_path, case_key=case_key), "request_id": request_id}
+                payload = {
+                    "rows": list_care_plans(
+                        config.db_path,
+                        case_key=case_key,
+                        organization_keys=_case_scope(actor),
+                    ),
+                    "request_id": request_id,
+                }
                 response = _json_response(start_response, "200 OK", payload)
                 append_request_event(
                     config.request_log_path,
@@ -441,7 +533,14 @@ def create_app(config: AppConfig):
 
             if method == "GET" and path.startswith("/cases/") and path.endswith("/notes"):
                 case_key = path.split("/")[2]
-                payload = {"rows": list_note_drafts(config.db_path, case_key=case_key), "request_id": request_id}
+                payload = {
+                    "rows": list_note_drafts(
+                        config.db_path,
+                        case_key=case_key,
+                        organization_keys=_case_scope(actor),
+                    ),
+                    "request_id": request_id,
+                }
                 response = _json_response(start_response, "200 OK", payload)
                 append_request_event(
                     config.request_log_path,
@@ -490,6 +589,7 @@ def create_app(config: AppConfig):
                     plan_type=data.get("plan_type", "home_tasks"),
                     payload=data["payload"],
                     created_by=data.get("created_by"),
+                    organization_keys=_case_scope(actor),
                 )
                 payload["request_id"] = request_id
                 response = _json_response(start_response, "200 OK", payload)
@@ -508,6 +608,7 @@ def create_app(config: AppConfig):
                     note_type=data.get("note_type", "assessment"),
                     payload=data["payload"],
                     created_by=data.get("created_by"),
+                    organization_keys=_case_scope(actor),
                 )
                 payload["request_id"] = request_id
                 response = _json_response(start_response, "200 OK", payload)
@@ -632,6 +733,7 @@ def create_app(config: AppConfig):
                         plan_type=data.get("plan_type", "home_tasks"),
                         payload=payload,
                         created_by=data.get("created_by"),
+                        organization_keys=_case_scope(actor),
                     )
                     payload["saved"] = saved
                 payload["request_id"] = request_id
@@ -664,6 +766,7 @@ def create_app(config: AppConfig):
                         note_type=data.get("note_type", "assessment"),
                         payload=payload,
                         created_by=data.get("created_by"),
+                        organization_keys=_case_scope(actor),
                     )
                     payload["saved"] = saved
                 payload["request_id"] = request_id

@@ -12,6 +12,8 @@ from ptsd_support.services.auth import (
     create_api_token,
     create_organization,
     create_user,
+    list_api_tokens,
+    revoke_api_token,
 )
 
 
@@ -100,6 +102,22 @@ class AuthTests(unittest.TestCase):
             status, body = run_request("/auth/me", token["token"])
             self.assertEqual(status, "200 OK")
             self.assertIn(b"viewer-1", body)
+
+    def test_token_list_and_revoke(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "auth-revoke.db"
+            create_user(
+                db_path,
+                user_key="viewer-2",
+                display_name="Viewer Two",
+                role="viewer",
+            )
+            token = create_api_token(db_path, user_key="viewer-2", label="revoke-me")
+            listed = list_api_tokens(db_path, user_key="viewer-2")
+            self.assertEqual(len(listed), 1)
+            revoked = revoke_api_token(db_path, token_prefix=token["token_prefix"], user_key="viewer-2")
+            self.assertIsNotNone(revoked["revoked_at"])
+            self.assertIsNone(authenticate_token(db_path, token["token"]))
 
 
 if __name__ == "__main__":

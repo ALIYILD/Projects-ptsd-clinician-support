@@ -197,6 +197,94 @@ def create_api_token(
         conn.close()
 
 
+def list_api_tokens(
+    db_path: str | Path,
+    *,
+    user_key: str | None = None,
+) -> list[dict[str, Any]]:
+    conn = connect(db_path)
+    try:
+        if user_key:
+            rows = conn.execute(
+                """
+                SELECT u.user_key, u.display_name, u.role, t.label, t.token_prefix,
+                       t.created_at, t.last_used_at, t.revoked_at
+                FROM api_tokens t
+                JOIN users u ON u.id = t.user_id
+                WHERE u.user_key = ?
+                ORDER BY t.created_at DESC, t.id DESC
+                """,
+                (user_key,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT u.user_key, u.display_name, u.role, t.label, t.token_prefix,
+                       t.created_at, t.last_used_at, t.revoked_at
+                FROM api_tokens t
+                JOIN users u ON u.id = t.user_id
+                ORDER BY t.created_at DESC, t.id DESC
+                """
+            ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def revoke_api_token(
+    db_path: str | Path,
+    *,
+    token_prefix: str,
+    user_key: str | None = None,
+) -> dict[str, Any]:
+    conn = connect(db_path)
+    try:
+        if user_key:
+            row = conn.execute(
+                """
+                SELECT t.id, u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at
+                FROM api_tokens t
+                JOIN users u ON u.id = t.user_id
+                WHERE t.token_prefix = ? AND u.user_key = ?
+                ORDER BY t.created_at DESC, t.id DESC
+                LIMIT 1
+                """,
+                (token_prefix, user_key),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT t.id, u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at
+                FROM api_tokens t
+                JOIN users u ON u.id = t.user_id
+                WHERE t.token_prefix = ?
+                ORDER BY t.created_at DESC, t.id DESC
+                LIMIT 1
+                """,
+                (token_prefix,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown token_prefix: {token_prefix}")
+        token_row = _row_to_dict(row)
+        conn.execute(
+            "UPDATE api_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (token_row["id"],),
+        )
+        updated = conn.execute(
+            """
+            SELECT u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at
+            FROM api_tokens t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.id = ?
+            """,
+            (token_row["id"],),
+        ).fetchone()
+        conn.commit()
+        return _row_to_dict(updated)
+    finally:
+        conn.close()
+
+
 def authenticate_token(db_path: str | Path, token: str) -> dict[str, Any] | None:
     token = token.strip()
     if not token:

@@ -355,14 +355,23 @@ def save_note_draft(
     note_type: str,
     payload: dict[str, Any],
     created_by: str | None = None,
+    organization_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        case_row = _fetch_one_as_dict(
-            conn,
-            "SELECT id FROM patient_cases WHERE case_key = ?",
-            (case_key,),
-        )
+        if organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            case_row = _fetch_one_as_dict(
+                conn,
+                f"SELECT id FROM patient_cases WHERE case_key = ? AND organization_key IN ({placeholders})",
+                (case_key, *sorted(organization_keys)),
+            )
+        else:
+            case_row = _fetch_one_as_dict(
+                conn,
+                "SELECT id FROM patient_cases WHERE case_key = ?",
+                (case_key,),
+            )
         if case_row is None:
             raise ValueError(f"Unknown case_key: {case_key}")
         conn.execute(
@@ -384,14 +393,27 @@ def save_note_draft(
         conn.close()
 
 
-def list_note_drafts(db_path: str | Path, *, case_key: str) -> list[dict[str, Any]]:
+def list_note_drafts(
+    db_path: str | Path,
+    *,
+    case_key: str,
+    organization_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
     conn = connect(db_path)
     try:
-        case_row = _fetch_one_as_dict(
-            conn,
-            "SELECT id FROM patient_cases WHERE case_key = ?",
-            (case_key,),
-        )
+        if organization_keys:
+            placeholders = ", ".join("?" for _ in organization_keys)
+            case_row = _fetch_one_as_dict(
+                conn,
+                f"SELECT id FROM patient_cases WHERE case_key = ? AND organization_key IN ({placeholders})",
+                (case_key, *sorted(organization_keys)),
+            )
+        else:
+            case_row = _fetch_one_as_dict(
+                conn,
+                "SELECT id FROM patient_cases WHERE case_key = ?",
+                (case_key,),
+            )
         if case_row is None:
             return []
         rows = _fetch_all_as_dicts(
