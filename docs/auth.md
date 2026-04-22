@@ -30,6 +30,7 @@ API token endpoints:
 - `GET /auth/tokens`
 - `POST /auth/tokens`
 - `POST /auth/tokens/revoke`
+- `POST /auth/tokens/rotate`
 
 For non-admin users, these endpoints are automatically limited to the current actor's own tokens.
 
@@ -86,6 +87,16 @@ curl -X POST \
   http://127.0.0.1:8080/auth/tokens
 ```
 
+Issue a token with expiry:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"temporary","ttl_days":7}' \
+  http://127.0.0.1:8080/auth/tokens
+```
+
 Revoke a token by prefix:
 
 ```bash
@@ -96,6 +107,16 @@ curl -X POST \
   http://127.0.0.1:8080/auth/tokens/revoke
 ```
 
+Rotate a token by prefix:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"token_prefix":"ptsd_abcd","ttl_days":30}' \
+  http://127.0.0.1:8080/auth/tokens/rotate
+```
+
 ## Notes
 
 - `GET /health` remains unauthenticated.
@@ -103,3 +124,5 @@ curl -X POST \
 - Tokens are stored as hashes in the database. The plaintext token is only available at creation time.
 - `admin` bypasses organization filters. `viewer` and `clinician` are scoped to their organization memberships.
 - Care plans and note drafts now inherit the same case/org access boundaries as case reads and writes.
+- Tokens can now expire, be revoked, and be rotated without reusing the original secret.
+- Admin-only audit log read endpoints are available at `GET /admin/audit` and `GET /admin/requests`.

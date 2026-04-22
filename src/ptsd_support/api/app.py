@@ -13,11 +13,12 @@ from ptsd_support.services.auth import (
     authenticate_token,
     create_api_token,
     list_api_tokens,
+    rotate_api_token,
     revoke_api_token,
     role_allows,
 )
 from ptsd_support.services.assessment import evaluate_case
-from ptsd_support.services.audit import append_audit_event, append_request_event
+from ptsd_support.services.audit import append_audit_event, append_request_event, read_jsonl_events
 from ptsd_support.services.care_plans import generate_care_plan, list_care_plans, save_care_plan
 from ptsd_support.services.cases import (
     add_case_review,
@@ -102,6 +103,10 @@ def _allowed_roles(method: str, path: str) -> set[str] | None:
         return {"viewer", "clinician", "admin"}
     if method == "POST" and path == "/auth/tokens/revoke":
         return {"viewer", "clinician", "admin"}
+    if method == "POST" and path == "/auth/tokens/rotate":
+        return {"viewer", "clinician", "admin"}
+    if method == "GET" and path in {"/admin/audit", "/admin/requests"}:
+        return {"admin"}
     if path == "/jobs":
         return {"admin"}
     if path.startswith("/jobs/"):
@@ -242,6 +247,79 @@ def create_app(config: AppConfig):
                         "status": 200,
                         "actor": actor["user_key"] if actor else None,
                         "token_prefix": data["token_prefix"],
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "POST" and path == "/auth/tokens/rotate":
+                data = _read_json(environ)
+                target_user_key = data.get("user_key")
+                if actor and actor["role"] != "admin":
+                    target_user_key = actor["user_key"]
+                ttl_days = data.get("ttl_days")
+                payload = rotate_api_token(
+                    config.db_path,
+                    token_prefix=data["token_prefix"],
+                    user_key=target_user_key,
+                    label=data.get("label"),
+                    ttl_days=int(ttl_days) if ttl_days is not None else None,
+                )
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "token_prefix": data["token_prefix"],
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "GET" and path == "/admin/audit":
+                payload = {
+                    "rows": read_jsonl_events(
+                        config.audit_log_path,
+                        limit=int(query.get("limit", ["100"])[0]),
+                    ),
+                    "request_id": request_id,
+                }
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "GET" and path == "/admin/requests":
+                payload = {
+                    "rows": read_jsonl_events(
+                        config.request_log_path,
+                        limit=int(query.get("limit", ["100"])[0]),
+                    ),
+                    "request_id": request_id,
+                }
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
                 )

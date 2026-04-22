@@ -23,3 +23,19 @@ def append_audit_event(log_path: str | Path, event: dict[str, Any]) -> None:
 
 def append_request_event(log_path: str | Path, event: dict[str, Any]) -> None:
     append_jsonl_event(log_path, {"stream": "request", **event})
+
+
+def read_jsonl_events(log_path: str | Path, *, limit: int = 100) -> list[dict[str, Any]]:
+    path = Path(log_path)
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    items = []
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        items.append(json.loads(line))
+        if len(items) >= limit:
+            break
+    return items

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,22 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
 
 def _token_prefix(token: str) -> str:
     return token[:8]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _expires_at(ttl_days: int | None) -> str | None:
+    if ttl_days is None:
+        return None
+    return (_utcnow() + timedelta(days=ttl_days)).isoformat()
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)
 
 
 def create_user(
@@ -164,6 +181,7 @@ def create_api_token(
     *,
     user_key: str,
     label: str | None = None,
+    ttl_days: int | None = None,
 ) -> dict[str, Any]:
     initialize_database(db_path)
     token = f"ptsd_{secrets.token_urlsafe(24)}"
@@ -175,14 +193,14 @@ def create_api_token(
         insert_and_get_id(
             conn,
             """
-            INSERT INTO api_tokens(user_id, token_hash, token_prefix, label)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO api_tokens(user_id, token_hash, token_prefix, label, expires_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (user_id, _hash_token(token), _token_prefix(token), label),
+            (user_id, _hash_token(token), _token_prefix(token), label, _expires_at(ttl_days)),
         )
         row = conn.execute(
             """
-            SELECT u.user_key, u.display_name, u.role, t.label, t.token_prefix, t.created_at
+            SELECT u.user_key, u.display_name, u.role, t.label, t.token_prefix, t.created_at, t.expires_at
             FROM api_tokens t
             JOIN users u ON u.id = t.user_id
             WHERE t.token_hash = ?
@@ -208,7 +226,7 @@ def list_api_tokens(
             rows = conn.execute(
                 """
                 SELECT u.user_key, u.display_name, u.role, t.label, t.token_prefix,
-                       t.created_at, t.last_used_at, t.revoked_at
+                       t.created_at, t.last_used_at, t.revoked_at, t.expires_at
                 FROM api_tokens t
                 JOIN users u ON u.id = t.user_id
                 WHERE u.user_key = ?
@@ -220,7 +238,7 @@ def list_api_tokens(
             rows = conn.execute(
                 """
                 SELECT u.user_key, u.display_name, u.role, t.label, t.token_prefix,
-                       t.created_at, t.last_used_at, t.revoked_at
+                       t.created_at, t.last_used_at, t.revoked_at, t.expires_at
                 FROM api_tokens t
                 JOIN users u ON u.id = t.user_id
                 ORDER BY t.created_at DESC, t.id DESC
@@ -242,7 +260,7 @@ def revoke_api_token(
         if user_key:
             row = conn.execute(
                 """
-                SELECT t.id, u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at
+                SELECT t.id, u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at, t.expires_at
                 FROM api_tokens t
                 JOIN users u ON u.id = t.user_id
                 WHERE t.token_prefix = ? AND u.user_key = ?
@@ -254,7 +272,7 @@ def revoke_api_token(
         else:
             row = conn.execute(
                 """
-                SELECT t.id, u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at
+                SELECT t.id, u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at, t.expires_at
                 FROM api_tokens t
                 JOIN users u ON u.id = t.user_id
                 WHERE t.token_prefix = ?
@@ -272,7 +290,7 @@ def revoke_api_token(
         )
         updated = conn.execute(
             """
-            SELECT u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at
+            SELECT u.user_key, t.token_prefix, t.label, t.created_at, t.last_used_at, t.revoked_at, t.expires_at
             FROM api_tokens t
             JOIN users u ON u.id = t.user_id
             WHERE t.id = ?
@@ -302,7 +320,8 @@ def authenticate_token(db_path: str | Path, token: str) -> dict[str, Any] | None
                 t.token_prefix,
                 t.created_at,
                 t.last_used_at,
-                t.revoked_at
+                t.revoked_at,
+                t.expires_at
             FROM api_tokens t
             JOIN users u ON u.id = t.user_id
             WHERE t.token_hash = ?
@@ -312,7 +331,8 @@ def authenticate_token(db_path: str | Path, token: str) -> dict[str, Any] | None
         if row is None:
             return None
         payload = _row_to_dict(row)
-        if payload["revoked_at"] or not payload["is_active"]:
+        expires_at = _parse_datetime(payload.get("expires_at"))
+        if payload["revoked_at"] or not payload["is_active"] or (expires_at is not None and expires_at <= _utcnow()):
             return None
         memberships = conn.execute(
             """
@@ -358,6 +378,24 @@ def list_users(db_path: str | Path) -> list[dict[str, Any]]:
 def actor_org_keys(actor: dict[str, Any]) -> set[str]:
     organizations = actor.get("organizations") or []
     return {org["org_key"] for org in organizations if org.get("org_key")}
+
+
+def rotate_api_token(
+    db_path: str | Path,
+    *,
+    token_prefix: str,
+    user_key: str | None = None,
+    label: str | None = None,
+    ttl_days: int | None = None,
+) -> dict[str, Any]:
+    revoked = revoke_api_token(db_path, token_prefix=token_prefix, user_key=user_key)
+    new_token = create_api_token(
+        db_path,
+        user_key=revoked["user_key"],
+        label=label or revoked.get("label"),
+        ttl_days=ttl_days,
+    )
+    return {"revoked": revoked, "new_token": new_token}
 
 
 def role_allows(user_role: str, allowed_roles: set[str]) -> bool:
