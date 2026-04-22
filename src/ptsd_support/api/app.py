@@ -8,6 +8,7 @@ from pathlib import Path
 from time import perf_counter
 from urllib.parse import parse_qs
 
+from ptsd_support.services.auth import authenticate_token, role_allows
 from ptsd_support.services.assessment import evaluate_case
 from ptsd_support.services.audit import append_audit_event, append_request_event
 from ptsd_support.services.care_plans import generate_care_plan, list_care_plans, save_care_plan
@@ -21,6 +22,7 @@ from ptsd_support.services.cases import (
 )
 from ptsd_support.services.differential import build_differential_diagnosis
 from ptsd_support.services.guidelines import list_guideline_recommendations, list_guidelines
+from ptsd_support.services.jobs import enqueue_job, get_job, list_jobs
 from ptsd_support.services.notes import draft_clinician_note, list_note_drafts, save_note_draft
 from ptsd_support.services.recommendations import build_support_plan
 from ptsd_support.services.retrieval import get_ingest_summary, search_articles
@@ -35,6 +37,8 @@ class AppConfig:
     db_path: Path
     audit_log_path: Path
     request_log_path: Path
+    queue_dir: Path | None = None
+    require_auth: bool = False
 
 
 def _json_response(start_response, status: str, payload: dict | list) -> list[bytes]:
@@ -56,6 +60,44 @@ def _read_json(environ) -> dict:
     return json.loads(raw.decode("utf-8") or "{}")
 
 
+def _extract_bearer_token(environ) -> str | None:
+    authorization = environ.get("HTTP_AUTHORIZATION", "")
+    if authorization.startswith("Bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    api_key = environ.get("HTTP_X_API_KEY", "").strip()
+    return api_key or None
+
+
+def _auth_error(start_response, status: str, error: str, request_id: str) -> list[bytes]:
+    return _json_response(start_response, status, {"error": error, "request_id": request_id})
+
+
+def _require_actor(config: AppConfig, environ, start_response, request_id: str, allowed_roles: set[str]):
+    if not config.require_auth:
+        return {"user_key": "local-dev", "role": "admin", "display_name": "Local Dev"}, None
+    token = _extract_bearer_token(environ)
+    if not token:
+        return None, ("401 Unauthorized", "authentication_required")
+    actor = authenticate_token(config.db_path, token)
+    if actor is None:
+        return None, ("401 Unauthorized", "invalid_api_token")
+    if not role_allows(actor["role"], allowed_roles):
+        return None, ("403 Forbidden", "insufficient_role")
+    return actor, None
+
+
+def _allowed_roles(method: str, path: str) -> set[str] | None:
+    if method == "GET" and path == "/health":
+        return None
+    if method == "GET" and path in {"/literature/search", "/literature/summary", "/guidelines", "/guidelines/recommendations", "/auth/me"}:
+        return {"viewer", "clinician", "admin"}
+    if path == "/jobs":
+        return {"admin"}
+    if path.startswith("/jobs/"):
+        return {"admin"}
+    return {"clinician", "admin"}
+
+
 def create_app(config: AppConfig):
     def application(environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET").upper()
@@ -75,6 +117,40 @@ def create_app(config: AppConfig):
                         "method": method,
                         "path": path,
                         "status": 200,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            actor = None
+            allowed_roles = _allowed_roles(method, path)
+            if allowed_roles is not None:
+                actor, auth_error = _require_actor(config, environ, start_response, request_id, allowed_roles)
+                if auth_error is not None:
+                    response = _auth_error(start_response, auth_error[0], auth_error[1], request_id)
+                    append_request_event(
+                        config.request_log_path,
+                        {
+                            "request_id": request_id,
+                            "method": method,
+                            "path": path,
+                            "status": 401 if auth_error[0].startswith("401") else 403,
+                            "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                        },
+                    )
+                    return response
+
+            if method == "GET" and path == "/auth/me":
+                payload = {"actor": actor, "request_id": request_id}
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
                 )
@@ -106,6 +182,7 @@ def create_app(config: AppConfig):
                         "method": method,
                         "path": path,
                         "status": 200,
+                        "actor": actor["user_key"] if actor else None,
                         "query": query,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
@@ -122,6 +199,7 @@ def create_app(config: AppConfig):
                         "method": method,
                         "path": path,
                         "status": 200,
+                        "actor": actor["user_key"] if actor else None,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
                 )
@@ -137,6 +215,7 @@ def create_app(config: AppConfig):
                         "method": method,
                         "path": path,
                         "status": 200,
+                        "actor": actor["user_key"] if actor else None,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
                 )
@@ -160,7 +239,91 @@ def create_app(config: AppConfig):
                         "method": method,
                         "path": path,
                         "status": 200,
+                        "actor": actor["user_key"] if actor else None,
                         "query": query,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "GET" and path == "/jobs":
+                payload = {
+                    "rows": list_jobs(
+                        config.db_path,
+                        status=query.get("status", [None])[0],
+                        limit=int(query.get("limit", ["25"])[0]),
+                    ),
+                    "request_id": request_id,
+                }
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "POST" and path == "/jobs":
+                data = _read_json(environ)
+                payload = dict(data.get("payload") or {})
+                payload.setdefault("db_path", str(config.db_path))
+                job = enqueue_job(
+                    config.queue_dir or config.db_path.parent / "jobs",
+                    data["job_type"],
+                    payload,
+                    requested_by=actor["user_key"] if actor else None,
+                )
+                job["request_id"] = request_id
+                append_audit_event(
+                    config.audit_log_path,
+                    {
+                        "event": "job_enqueue",
+                        "path": path,
+                        "job_type": data["job_type"],
+                        "requested_by": actor["user_key"] if actor else None,
+                    },
+                )
+                response = _json_response(start_response, "200 OK", job)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "job_type": data["job_type"],
+                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return response
+
+            if method == "GET" and path.startswith("/jobs/"):
+                job_id = path.split("/")[2]
+                payload = get_job(config.db_path, job_id)
+                if payload is None:
+                    return _json_response(
+                        start_response,
+                        "404 Not Found",
+                        {"error": "job_not_found", "job_id": job_id, "request_id": request_id},
+                    )
+                payload["request_id"] = request_id
+                response = _json_response(start_response, "200 OK", payload)
+                append_request_event(
+                    config.request_log_path,
+                    {
+                        "request_id": request_id,
+                        "method": method,
+                        "path": path,
+                        "status": 200,
+                        "actor": actor["user_key"] if actor else None,
+                        "job_id": job_id,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },
                 )
@@ -179,6 +342,7 @@ def create_app(config: AppConfig):
                         "method": method,
                         "path": path,
                         "status": 200,
+                        "actor": actor["user_key"] if actor else None,
                         "query": query,
                         "duration_ms": round((perf_counter() - started_at) * 1000, 2),
                     },

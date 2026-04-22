@@ -36,6 +36,17 @@ def main() -> None:
         default=os.environ.get("PTSD_SUPPORT_REQUEST_LOG", "data/processed/requests.jsonl"),
         help="Path to structured request log.",
     )
+    parser.add_argument(
+        "--queue-dir",
+        default=os.environ.get("PTSD_SUPPORT_QUEUE_DIR", "data/processed/jobs"),
+        help="Path to the background job queue directory.",
+    )
+    parser.add_argument(
+        "--require-auth",
+        action="store_true",
+        default=os.environ.get("PTSD_SUPPORT_REQUIRE_AUTH", "true").lower() == "true",
+        help="Require API authentication for non-health endpoints.",
+    )
     args = parser.parse_args()
 
     app = create_app(
@@ -43,6 +54,8 @@ def main() -> None:
             db_path=Path(args.db).expanduser().resolve(),
             audit_log_path=Path(args.audit_log).expanduser().resolve(),
             request_log_path=Path(args.request_log).expanduser().resolve(),
+            queue_dir=Path(args.queue_dir).expanduser().resolve(),
+            require_auth=args.require_auth,
         )
     )
 

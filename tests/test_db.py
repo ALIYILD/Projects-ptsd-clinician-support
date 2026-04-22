@@ -24,6 +24,9 @@ class DatabaseTests(unittest.TestCase):
                 self.assertIn("schema_migrations", tables)
                 self.assertIn("articles", tables)
                 self.assertIn("patient_cases", tables)
+                self.assertIn("users", tables)
+                self.assertIn("api_tokens", tables)
+                self.assertIn("job_runs", tables)
                 condition = conn.execute(
                     "SELECT slug FROM conditions WHERE slug = 'ptsd'"
                 ).fetchone()

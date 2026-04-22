@@ -96,3 +96,5 @@ The repo does not currently verify here:
 - query-plan or performance tuning under multi-user load
 
 Treat Postgres as implemented at the adapter/migration layer and ready for explicit environment validation, but not yet signed off as the default deployment runtime.
+
+For an operator-facing validation command, see [postgres-validation.md](/Users/aliyildirim/Projects/ptsd-clinician-support/docs/postgres-validation.md).
